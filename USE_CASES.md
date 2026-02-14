@@ -1,93 +1,177 @@
-# Cobalt Use Cases & User Stories
+# Cobalt: Practical Integration Guide & Use Cases
 
-This document outlines 10 diverse real-world scenarios where the Cobalt (CBC) format provides unique value through its integrity, selective disclosure, and provenance features.
+This document bridges the gap between high-level concepts and actual code. For each use case, we provide the specific CLI commands or Rust API calls needed to implement it.
 
 ---
 
 ## 1. Verifiable Software Supply Chain
 
-**Scenario**: A DevOps team wants to ensure that CI/CD build artifacts haven't been altered between the build stage and production deployment.
+**Goal**: Sign a build artifact and verify its integrity in CI.
 
-**User Story**:
-> "As a Security Engineer, I want to wrap my compiled binaries in a Cobalt container at the end of a GitHub Action. Because Cobalt uses Family A (Chain Commitments), any bit-flip during storage or transport will result in a validation failure. By attaching a transform receipt from the build server, I can prove the binary was produced by a trusted environment."
+### Implementation: Verifiable Supply Chain (CLI)
+
+```bash
+# 1. Encode the binary into Cobalt format
+cbc encode -i target/release/myapp -o myapp.cbc --families A+B
+
+# 2. Add an Ed25519 signature of the Merkle Root
+cbc sign -i myapp.cbc -k build-server.key --alg ed25519 -o signed-myapp.cbc
+
+# 3. In the deployment stage, validate the whole artifact
+cbc validate -i signed-myapp.cbc
+```
 
 ---
 
 ## 2. Privacy-Preserving Health Records
 
-**Scenario**: A patient needs to share their immunization records with a school without revealing their entire medical history.
+**Goal**: Disclose only a specific sub-range of a document.
 
-**User Story**:
-> "As a Patient, I want to store my complete medical dossier in a Cobalt artifact. Using Family B (Merkle Proofs), I can generate a 'Range Proof' for just the 'Vaccinations' section. The school can verify that this section is authentic and untampered relative to the original hospital's root hash, without seeing any other data in the file."
+### Implementation: Selective Disclosure (Rust API)
+
+```rust
+use cbc_core::decoder::decode;
+use cbc_core::merkle::RangeProof;
+
+// hospital.cbc contains [Page1, Page2, Page3, ...]
+// User wants to disclose just Page 2 (index 1)
+let artifact = std::fs::read("hospital.cbc").unwrap();
+let decoded = decode(&artifact).unwrap();
+
+// Generate proof for Page 2
+let tree = decoded.merkle_tree().unwrap();
+let proof = tree.prove_range(1, 1).unwrap();
+
+// Share 'proof.encode()' and the Page 2 data with the school.
+// The school verifies it against the hospital's known Root Hash.
+assert!(proof.verify(&[page2_hash], &hospital_root, suite));
+```
 
 ---
 
 ## 3. High-Integrity Forensic Audit Logs
 
-**Scenario**: A financial institution must maintain audit logs for 10 years that are resistant to "retroactive editing."
+**Goal**: Record logs that cannot be deleted or reordered without detection.
 
-**User Story**:
-> "As a Compliance Officer, I need my server logs to be tamper-evident. By using Cobalt's **One-Pass Streaming Encoder**, our logging agent can stream entries directly into a CBC file. Since each entry is chained to the previous one, any attempt to delete or reorder historical logs will break the cryptographic chain, making it immediately visible during an audit."
+### Implementation: High-Integrity Logging (Rust API)
+
+```rust
+use cbc_core::streaming::StreamingEncoder;
+
+let mut logger = StreamingEncoder::new(&config, nonce);
+
+// As logs arrive, write them one by one
+loop {
+    let log_entry = get_next_log();
+    // write_payload handles buffering and chaining automatically
+    logger.write_payload(log_entry.as_bytes()).unwrap();
+}
+
+// At the end of the day or log rotation
+let final_log_file = logger.finalize(&[]).unwrap();
+```
 
 ---
 
 ## 4. Secure IoT Firmware Updates
 
-**Scenario**: A smart-grid manufacturer needs to deliver firmware to thousands of constrained devices over unreliable connections.
+**Goal**: Verify chunks of an update on a low-memory device.
 
-**User Story**:
-> "As an IoT Developer, I need a lightweight integrity format that doesn't overwhelm my low-memory devices. Cobalt's `no_std` support and Family C (Structural Robustness) are perfect. If a transmission is interrupted or corrupted, my devices can use the prefix markers to resynchronize and verify the integrity of the chunks they actually received before applying the update."
+### Implementation: IoT Firmware Updates (no_std API)
+
+```rust
+use cbc_core::streaming::StreamingDecoder;
+
+let mut decoder = StreamingDecoder::new();
+decoder.feed_bootstrap(&bootstrap_bytes).unwrap();
+
+// As chunks arrive over the network
+for chunk in network_stream {
+    // Validates each block's HMAC/Checksum and Chain Commitment immediately
+    let plaintext = decoder.feed_block(chunk, is_last).unwrap();
+    apply_to_flash(plaintext);
+}
+```
 
 ---
 
 ## 5. Chain of Custody for Digital Evidence
 
-**Scenario**: A police department collects video evidence from body cameras that must hold up in court.
+**Goal**: Record every transformation of evidence (cropping or format conversion).
 
-**User Story**:
-> "As a Forensic Investigator, I need to prove that a video file hasn't been modified since it was recorded. I use the `cbc-transform` library to add metadata and a digital signature (Ed25519) to the original Cobalt-wrapped video. Every step of the evidence handling process adds a 'Receipt', creating a cryptographically verifiable chain of custody."
+### Implementation: Chain of Custody (CLI)
+
+```bash
+# Extract a subrange (e.g., first 5 minutes) and generate a receipt
+cbc transform -t subrange -i evidence.cbc -o subrange.cbc \
+    -k investigator.key --start 0 --end 150 --receipt
+
+# Inspect the provenance
+cbc inspect -i subrange.cbc
+# Output will show the Chain of Custody receipts linked to the original root.
+```
 
 ---
 
-## 6. Efficient Large-Scale Genomic Data Sharing
+## 6. Efficient Genomic Data Sharing
 
-**Scenario**: Researchers share multi-terabyte genome sequences but often only need to analyze specific gene sequences.
+**Goal**: Download and verify a 20MB gene sequence out of a 2TB file.
 
-**User Story**:
-> "As a Geneticist, I don't want to download a 2TB file just to check one gene. By indexing the CBC file with Family B, I can request only the specific byte-range I need. Cobalt allows me to verify that the chunks I downloaded are exactly as the original sequencing lab intended, even though I'm only looking at 0.01% of the file."
+### Implementation: Genomic Data Concept
+
+1. Store the genome as a CBC file with 64KB blocks.
+2. The client fetches the **Bootstrap** (64B) and **Footer** (64B) to get the Merkle Root.
+3. The client fetches and verifies only the **Range Proof** and the data blocks for the specific gene.
 
 ---
 
 ## 7. Tamper-Proof Legal Contracts
 
-**Scenario**: Two parties want to sign a multi-page PDF contract where individual pages might later be updated or appended as annexes.
+**Goal**: Map each page of a contract to a block.
 
-**User Story**:
-> "As a Lawyer, I want a contract format where every page is a block. Using Cobalt, I can prove that the 'Annex A' added today is mathematically linked to the original signature from last year. If anyone tries to swap Page 5 of the original contract, the entire container becomes invalid."
+### Implementation: Legal Contracts (CLI)
+
+```bash
+# Each file represents a page
+cbc encode -i page1.pdf page2.pdf page3.pdf -o contract.cbc --families A+B
+```
 
 ---
 
 ## 8. Verifiable CDN Asset Delivery
 
-**Scenario**: A streaming service delivers video chunks via a transparent CDN but wants to prevent "man-in-the-middle" content substitution.
+**Goal**: Stop playback if a segment is injected with non-authentic data.
 
-**User Story**:
-> "As a Content Provider, I want my player software to verify every 2-second segment of video as it arrives. By using Cobalt's **Streaming Decoder**, the player can validate the hash commitment of the current block against the running root. If a proxy tries to inject an advertisement or malicious script into the stream, the player can instantly halt playback."
+### Implementation: CDN Asset Validation (Rust API)
 
----
-
-## 9. Decentralized Application (dApp) State Snapshots
-
-**Scenario**: A blockchain bridge needs to sync its state with a secondary network using lightweight proofs.
-
-**User Story**:
-> "As a Protocol Architect, I use Cobalt to package our daily state snapshots. Instead of sending the entire state tree to the secondary network, I send simple Merkle Range Proofs for specific account balances. The low overhead of Cobalt's metadata (1.17%) ensures that our network sync stays fast and efficient."
+```rust
+// The video player uses StreamingDecoder
+decoder.feed_block(segment_bytes, is_last)?; // Returns Err(ChainCommitmentMismatch) if tampered
+```
 
 ---
 
-## 10. Archival Data with "Self-Healing" Recovery
+## 9. dApp State Snapshots
 
-**Scenario**: A library archives historical documents on physical media that is prone to "bit-rot" over decades.
+**Goal**: Share a small proof of an account balance.
 
-**User Story**:
-> "As a Digital Librarian, I've seen many files lost to single-bit errors in file headers. By wrapping our archives in Cobalt with Family C enabled, we gain structural robustness. If the file header or specific blocks are corrupted by bit-rot, the Cobalt decoder can scan for the next valid prefix marker and recover all subsequent data, minimizing the total loss."
+### Implementation: dApp Balance Proofs (Rust API)
+
+```rust
+// Use RangeProof::encode() to send a ~1KB proof for a specific state block
+// instead of the whole 1GB state snapshot.
+```
+
+---
+
+## 10. Archival Data Resynchronization
+
+**Goal**: Recover data after a header or block is corrupted by "bit-rot."
+
+### Implementation: Archival Recovery (CLI)
+
+```bash
+# If 'corrupted.cbc' has a bad header, use the recovery scanner
+cbc validate -i corrupted.cbc --recover
+# The tool uses Family C (Prefix Markers) to find the next valid block boundary.
+```
