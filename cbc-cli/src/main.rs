@@ -1,7 +1,9 @@
 //! CBC CLI — command-line tool for encoding, decoding, validating, inspecting, and
 //! transforming CBC artifacts.
 use clap::{Parser, Subcommand};
+use serde::Serialize;
 use std::fs;
+use std::io::{self, Read};
 use std::path::PathBuf;
 use std::process;
 
@@ -14,6 +16,41 @@ use std::process;
 struct Cli {
     #[command(subcommand)]
     command: Commands,
+}
+
+#[derive(Serialize)]
+struct InspectionReport {
+    file_size: u64,
+    hash_suite: String,
+    commitment_mode: String,
+    block_payload_size: u32,
+    block_count: u32,
+    nonce: String,
+    flags: Vec<String>,
+    chain_root: Option<String>,
+    merkle_root: Option<String>,
+    payload_size: Option<usize>,
+    receipts: Vec<ReceiptSummary>,
+    validation: String,
+}
+
+#[derive(Serialize)]
+struct ReceiptSummary {
+    index: usize,
+    source_root: String,
+    derived_root: String,
+    transform: String,
+    timestamp: u64,
+    sig_alg: String,
+}
+
+#[derive(Serialize)]
+struct ValidationReport {
+    valid: bool,
+    status: String,
+    blocks_verified: u32,
+    total_blocks: Option<u32>,
+    error: Option<String>,
 }
 
 #[derive(Subcommand)]
@@ -64,6 +101,12 @@ enum Commands {
         /// Attempt to recover data from corrupted artifact using prefix markers
         #[arg(long)]
         recover: bool,
+        /// Allow validation of partial chains (missing footer)
+        #[arg(long)]
+        partial: bool,
+        /// Output validation report as JSON
+        #[arg(long)]
+        json: bool,
     },
 
     /// Inspect a CBC artifact and display metadata
@@ -71,6 +114,38 @@ enum Commands {
         /// Input CBC artifact file
         #[arg(short, long)]
         input: PathBuf,
+        /// Output inspection report as JSON
+        #[arg(long)]
+        json: bool,
+    },
+
+    /// Extract a subrange from a CBC artifact (alias for transform --type subrange)
+    Extract {
+        /// Input CBC artifact file
+        #[arg(short, long)]
+        input: PathBuf,
+        /// Output CBC artifact file
+        #[arg(short, long)]
+        output: PathBuf,
+        /// Signing key (file path, @file, env:VAR, or hex)
+        #[arg(short, long)]
+        key: String,
+        /// Start block index (inclusive)
+        #[arg(long)]
+        start: u32,
+        /// End block index (inclusive)
+        #[arg(long)]
+        end: u32,
+    },
+
+    /// Decode payload to stdout (alias for decode -> stdout)
+    Cat {
+        /// Input CBC artifact file
+        #[arg(short, long)]
+        input: PathBuf,
+        /// Decryption key (file path, @file, env:VAR, or hex)
+        #[arg(long)]
+        decrypt_key: Option<String>,
     },
 
     /// Perform a transform operation
@@ -218,13 +293,30 @@ fn main() {
             families,
             compress,
             encrypt_key,
-        } => cmd_encode(input, output, hash, block_size, families, compress, encrypt_key),
+        } => cmd_encode(
+            input,
+            output,
+            hash,
+            block_size,
+            families,
+            compress,
+            encrypt_key,
+        ),
 
-        Commands::Decode { input, output, decrypt_key } => cmd_decode(input, output, decrypt_key),
+        Commands::Decode {
+            input,
+            output,
+            decrypt_key,
+        } => cmd_decode(input, output, decrypt_key),
 
-        Commands::Validate { input, recover } => cmd_validate(input, recover),
+        Commands::Validate {
+            input,
+            recover,
+            partial,
+            json,
+        } => cmd_validate(input, recover, partial, json),
 
-        Commands::Inspect { input } => cmd_inspect(input),
+        Commands::Inspect { input, json } => cmd_inspect(input, json),
 
         Commands::Transform {
             transform_type,
@@ -259,6 +351,16 @@ fn main() {
 
         Commands::VerifyProof { input, proof } => cmd_verify_proof(input, proof),
 
+        Commands::Cat { input, decrypt_key } => cmd_cat(input, decrypt_key),
+
+        Commands::Extract {
+            input,
+            output,
+            key,
+            start,
+            end,
+        } => cmd_extract(input, output, key, start, end),
+
         Commands::StreamEncode {
             input,
             output,
@@ -267,7 +369,15 @@ fn main() {
             families,
             compress,
             encrypt_key,
-        } => cmd_stream_encode(input, output, hash, block_size, families, compress, encrypt_key),
+        } => cmd_stream_encode(
+            input,
+            output,
+            hash,
+            block_size,
+            families,
+            compress,
+            encrypt_key,
+        ),
     }
 }
 
@@ -307,8 +417,8 @@ fn cmd_encode(
         encryption_key: key,
     };
 
-    let artifact = cbc_core::encoder::encode_random_nonce(&config, &payload, &[])
-        .unwrap_or_else(|e| {
+    let artifact =
+        cbc_core::encoder::encode_random_nonce(&config, &payload, &[]).unwrap_or_else(|e| {
             eprintln!("✗ Encoding failed: {e}");
             process::exit(1);
         });
@@ -355,7 +465,7 @@ fn cmd_decode(input: PathBuf, output: PathBuf, decrypt_key: Option<String>) {
     );
 }
 
-fn cmd_validate(input: PathBuf, recover: bool) {
+fn cmd_validate(input: PathBuf, recover: bool, partial: bool, json_output: bool) {
     let data = fs::read(&input).unwrap_or_else(|e| {
         eprintln!("Error reading {}: {e}", input.display());
         process::exit(1);
@@ -368,11 +478,123 @@ fn cmd_validate(input: PathBuf, recover: bool) {
 
     match cbc_core::decoder::validate(&data) {
         Ok(()) => {
-            println!("✓ Valid CBC artifact");
+            if json_output {
+                let report = ValidationReport {
+                    valid: true,
+                    status: "Valid".to_string(),
+                    blocks_verified: 0, // We didn't count them in validate()
+                    total_blocks: None,
+                    error: None,
+                };
+                println!("{}", serde_json::to_string_pretty(&report).unwrap());
+            } else {
+                println!("✓ Valid CBC artifact");
+            }
             process::exit(0);
         }
         Err(e) => {
-            eprintln!("✗ Invalid: {e}");
+            // If standard validation failed, check if partial validation works
+            if partial {
+                // Heuristic partial validation
+                let mut report = ValidationReport {
+                    valid: false,
+                    status: "Invalid".to_string(),
+                    blocks_verified: 0,
+                    total_blocks: None,
+                    error: Some(e.to_string()),
+                };
+
+                if data.len() >= 64 {
+                    // Try to stream validate what we have
+                    let mut decoder = cbc_core::streaming::StreamingDecoder::new(None);
+                    if decoder.feed_bootstrap(&data[..64]).is_ok() {
+                        let bps = decoder.bootstrap().unwrap().block_payload_size as usize;
+                        let mut offset = 64;
+                        let mut loop_err = None;
+                        loop {
+                            if offset + 16 > data.len() {
+                                break;
+                            }
+                            // We don't strictly need to read header to know size, but we do to validate it
+                            let mut h_bytes = [0u8; 16];
+                            h_bytes.copy_from_slice(&data[offset..offset + 16]);
+                            let header = cbc_core::block::BlockHeader::decode(&h_bytes);
+
+                            // Safety check on payload length
+                            if header.payload_length as usize > bps {
+                                break;
+                            }
+
+                            let block_len = 16 + bps + 32;
+                            if offset + block_len > data.len() {
+                                break;
+                            } // Truncated
+
+                            let block_bytes = &data[offset..offset + block_len];
+                            // In recovery/partial mode, we don't know if a block is last or not.
+                            // Treating it as "potentially last" (true) allows partial payloads to validate.
+                            match decoder.feed_block(block_bytes, true) {
+                                Ok(_) => {
+                                    report.blocks_verified += 1;
+                                    offset += block_len;
+                                }
+                                Err(verr) => {
+                                    loop_err = Some(verr);
+                                    break;
+                                }
+                            }
+                        }
+
+                        if let Some(verr) = loop_err {
+                            report.status = format!("Partial Fail: {verr}");
+                            report.valid = false;
+                        } else {
+                            // No block errors, just stopped (EOF)
+                            // This counts as a valid partial chain
+                            report.valid = true;
+                            report.status = "Valid Partial Chain".to_string();
+                            report.error = None; // Clear the original validation error
+                        }
+                    }
+                }
+
+                if json_output {
+                    println!("{}", serde_json::to_string_pretty(&report).unwrap());
+                } else {
+                    if report.valid {
+                        println!(
+                            "✓ Valid Partial Chain ({} blocks verified)",
+                            report.blocks_verified
+                        );
+                        println!("  (Standard validation failed: {e})");
+                    } else {
+                        eprintln!("✗ Invalid: {e}");
+                        eprintln!(
+                            "  Partial scan failed after {} blocks: {}",
+                            report.blocks_verified, report.status
+                        );
+                    }
+                }
+
+                if report.valid {
+                    process::exit(0);
+                } else {
+                    process::exit(1);
+                }
+            }
+
+            if json_output {
+                let report = ValidationReport {
+                    valid: false,
+                    status: "Invalid".to_string(),
+                    blocks_verified: 0,
+                    total_blocks: None,
+                    error: Some(e.to_string()),
+                };
+                println!("{}", serde_json::to_string_pretty(&report).unwrap());
+            } else {
+                eprintln!("✗ Invalid: {e}");
+            }
             process::exit(1);
         }
     }
@@ -384,7 +606,7 @@ fn cmd_recover_lite(data: &[u8]) {
         eprintln!("File too small for recovery");
         process::exit(1);
     }
-    
+
     let mut bootstrap_bytes = [0u8; 64];
     bootstrap_bytes.copy_from_slice(&data[..64]);
     let bs = match cbc_core::BootstrapSegment::decode(&bootstrap_bytes) {
@@ -395,7 +617,7 @@ fn cmd_recover_lite(data: &[u8]) {
             process::exit(1);
         }
     };
-    
+
     let mut recovered_blocks = 0;
     let mut offset = 64;
     while offset < data.len() {
@@ -410,18 +632,17 @@ fn cmd_recover_lite(data: &[u8]) {
             None => break,
         }
     }
-    
+
     println!("\nRecovery summary: Found {recovered_blocks} potential block boundaries.");
     println!("In a full implementation, these would be reassembled into a new artifact.");
 }
 
-fn cmd_inspect(input: PathBuf) {
+fn cmd_inspect(input: PathBuf, json_output: bool) {
     let data = fs::read(&input).unwrap_or_else(|e| {
         eprintln!("Error reading {}: {e}", input.display());
         process::exit(1);
     });
 
-    // Parse bootstrap (always safe even if artifact is invalid)
     if data.len() < 64 {
         eprintln!(
             "File too small for CBC bootstrap segment ({} bytes)",
@@ -435,57 +656,99 @@ fn cmd_inspect(input: PathBuf) {
 
     match cbc_core::BootstrapSegment::decode(&bootstrap_bytes) {
         Ok(bs) => {
-            println!("=== CBC Artifact Inspection ===");
-            println!("File size:         {} bytes", data.len());
-            println!("Hash suite:        {:?}", bs.hash_suite);
-            println!(
-                "Commitment mode:   0x{:02x} (A:{} B:{} C:{})",
-                bs.commitment_mode,
-                if bs.family_a() { "✓" } else { "✗" },
-                if bs.family_b() { "✓" } else { "✗" },
-                if bs.family_c() { "✓" } else { "✗" },
-            );
-            println!("Block payload:     {} bytes", bs.block_payload_size);
-            println!("Block count:       {}", bs.block_count);
-            println!("Nonce:             {}", hex::encode(bs.bootstrap_nonce));
-            println!(
-                "Flags:             0x{:08x} (compressed:{} encrypted:{})",
-                bs.flags,
-                if bs.flags & 0x01 != 0 { "yes" } else { "no" },
-                if bs.flags & 0x02 != 0 { "yes" } else { "no" },
-            );
+            let mut report = InspectionReport {
+                file_size: data.len() as u64,
+                hash_suite: format!("{:?}", bs.hash_suite),
+                commitment_mode: format!(
+                    "0x{:02x} (A:{} B:{} C:{})",
+                    bs.commitment_mode,
+                    if bs.family_a() { "✓" } else { "✗" },
+                    if bs.family_b() { "✓" } else { "✗" },
+                    if bs.family_c() { "✓" } else { "✗" },
+                ),
+                block_payload_size: bs.block_payload_size,
+                block_count: bs.block_count,
+                nonce: hex::encode(bs.bootstrap_nonce),
+                flags: Vec::new(),
+                chain_root: None,
+                merkle_root: None,
+                payload_size: None,
+                receipts: Vec::new(),
+                validation: "Unknown".to_string(),
+            };
 
-            // Try full validation
+            if bs.flags & 0x01 != 0 {
+                report.flags.push("compressed".to_string());
+            }
+            if bs.flags & 0x02 != 0 {
+                report.flags.push("encrypted".to_string());
+            }
+
             match cbc_core::decoder::decode(&data, None) {
                 Ok(decoded) => {
-                    println!("Chain root:        {}", hex::encode(decoded.chain_root));
-                    if let Some(mr) = decoded.merkle_root {
-                        println!("Merkle root:       {}", hex::encode(mr));
-                    }
-                    println!("Payload size:      {} bytes", decoded.payload.len());
-                    println!("Receipts:          {}", decoded.receipt_slots.len());
+                    report.chain_root = Some(hex::encode(decoded.chain_root));
+                    report.merkle_root = decoded.merkle_root.map(hex::encode);
+                    report.payload_size = Some(decoded.payload.len());
+                    report.validation = "PASS".to_string();
+
                     for (i, r) in decoded.receipt_slots.iter().enumerate() {
-                        match cbc_transform::Receipt::decode(r) {
-                            Ok(receipt) => {
-                                println!("  Receipt #{i}:");
-                                println!("    Source root:   {}", hex::encode(receipt.source_root));
-                                println!(
-                                    "    Derived root:  {}",
-                                    hex::encode(receipt.derived_root)
-                                );
-                                println!("    Transform:     {:?}", receipt.transform_type);
-                                println!("    Timestamp:     {}", receipt.timestamp);
-                                println!("    Sig algorithm: {:?}", receipt.sig_alg);
-                            }
-                            Err(_) => {
-                                println!("  Receipt #{i}: (decode error, {} bytes)", r.len());
-                            }
+                        if let Ok(receipt) = cbc_transform::Receipt::decode(r) {
+                            report.receipts.push(ReceiptSummary {
+                                index: i,
+                                source_root: hex::encode(receipt.source_root),
+                                derived_root: hex::encode(receipt.derived_root),
+                                transform: format!("{:?}", receipt.transform_type),
+                                timestamp: receipt.timestamp,
+                                sig_alg: format!("{:?}", receipt.sig_alg),
+                            });
                         }
                     }
-                    println!("\nValidation:        ✓ PASS");
                 }
                 Err(e) => {
-                    println!("\nValidation:        ✗ FAIL ({e})");
+                    report.validation = format!("FAIL ({e})");
+                }
+            }
+
+            if json_output {
+                println!("{}", serde_json::to_string_pretty(&report).unwrap());
+            } else {
+                println!("=== CBC Artifact Inspection ===");
+                println!("File size:         {} bytes", report.file_size);
+                println!(
+                    "Hash suite:        {}",
+                    format!("{:?}", bs.hash_suite).to_uppercase()
+                );
+                // Let's use the report string which is formatted.
+                println!("Hash suite:        {:?}", bs.hash_suite);
+                println!("Commitment mode:   {}", report.commitment_mode);
+                println!("Block payload:     {} bytes", report.block_payload_size);
+                println!("Block count:       {}", report.block_count);
+                println!("Nonce:             {}", report.nonce);
+                println!("Flags:             {:?}", report.flags);
+
+                if let Some(cr) = &report.chain_root {
+                    println!("Chain root:        {}", cr);
+                }
+                if let Some(mr) = &report.merkle_root {
+                    println!("Merkle root:       {}", mr);
+                }
+                if let Some(ps) = report.payload_size {
+                    println!("Payload size:      {} bytes", ps);
+                }
+                println!("Receipts:          {}", report.receipts.len());
+                for r in &report.receipts {
+                    println!("  Receipt #{}:", r.index);
+                    println!("    Source root:   {}", r.source_root);
+                    println!("    Derived root:  {}", r.derived_root);
+                    println!("    Transform:     {}", r.transform);
+                    println!("    Timestamp:     {}", r.timestamp);
+                    println!("    Sig algorithm: {}", r.sig_alg);
+                }
+
+                if report.validation == "PASS" {
+                    println!("\nValidation:        ✓ PASS");
+                } else {
+                    println!("\nValidation:        ✗ {}", report.validation);
                 }
             }
         }
@@ -825,13 +1088,13 @@ fn cmd_sign(input_path: PathBuf, output_path: PathBuf, key_path: PathBuf) {
 
     // Determine key type by length
     let key = if key_data.len() == 32 {
-        cbc_transform::SigningKey::Ed25519(
-            ed25519_dalek::SigningKey::from_bytes(&key_data.try_into().unwrap()),
-        )
+        cbc_transform::SigningKey::Ed25519(ed25519_dalek::SigningKey::from_bytes(
+            &key_data.try_into().unwrap(),
+        ))
     } else if key_data.len() == 36 {
         // Assume SEC1 preserved
         cbc_transform::SigningKey::EcdsaP256(
-            p256::ecdsa::SigningKey::from_slice(&key_data).unwrap()
+            p256::ecdsa::SigningKey::from_slice(&key_data).unwrap(),
         )
     } else {
         eprintln!("Unknown key format ({} bytes)", key_data.len());
@@ -839,15 +1102,13 @@ fn cmd_sign(input_path: PathBuf, output_path: PathBuf, key_path: PathBuf) {
     };
 
     let bs = cbc_core::BootstrapSegment::decode(&source_data[..64].try_into().unwrap()).unwrap();
-    let (derived, receipt) = cbc_transform::subrange_extract(
-        &source_data,
-        0,
-        bs.block_count - 1,
-        &key
-    ).unwrap_or_else(|e| {
-        eprintln!("✗ Signing failed: {e}");
-        process::exit(1);
-    });
+    let (derived, receipt) =
+        cbc_transform::subrange_extract(&source_data, 0, bs.block_count - 1, &key).unwrap_or_else(
+            |e| {
+                eprintln!("✗ Signing failed: {e}");
+                process::exit(1);
+            },
+        );
 
     fs::write(&output_path, &derived).unwrap_or_else(|e| {
         eprintln!("Error writing {}: {e}", output_path.display());
@@ -949,11 +1210,101 @@ fn compute_padded_payloads(payload: &[u8], block_payload_size: u32) -> Vec<Vec<u
         .collect()
 }
 
-fn parse_key(s: &str) -> [u8; 32] {
-    let mut key = [0u8; 32];
-    hex::decode_to_slice(s, &mut key).unwrap_or_else(|e| {
-        eprintln!("Invalid encryption key (must be 64 hex characters): {e}");
+fn cmd_cat(input: PathBuf, decrypt_key: Option<String>) {
+    let data = fs::read(&input).unwrap_or_else(|e| {
+        eprintln!("Error reading {}: {e}", input.display());
         process::exit(1);
     });
-    key
+
+    let key = decrypt_key.map(|s| parse_key(&s));
+
+    // We use decode() which loads the whole file. For streaming cat, we'd need StreamingDecoder.
+    // For v0.1 cat, memory loading is acceptable.
+    let decoded = cbc_core::decoder::decode(&data, key).unwrap_or_else(|e| {
+        eprintln!("✗ Decode failed: {e}");
+        process::exit(1);
+    });
+
+    use std::io::Write;
+    io::stdout()
+        .write_all(&decoded.payload)
+        .unwrap_or_else(|e| {
+            eprintln!("Error writing to stdout: {e}");
+            process::exit(1);
+        });
+}
+
+fn cmd_extract(input: PathBuf, output: PathBuf, key_str: String, start: u32, end: u32) {
+    let data = fs::read(&input).unwrap_or_else(|e| {
+        eprintln!("Error reading {}: {e}", input.display());
+        process::exit(1);
+    });
+
+    let key_data = load_key_material(&key_str);
+    let signing_key = load_signing_key(&key_data);
+
+    let (artifact, _receipt) = cbc_transform::subrange_extract(&data, start, end, &signing_key)
+        .unwrap_or_else(|e| {
+            eprintln!("Extraction failed: {e}");
+            process::exit(1);
+        });
+
+    fs::write(&output, &artifact).unwrap_or_else(|e| {
+        eprintln!("Error writing {}: {e}", output.display());
+        process::exit(1);
+    });
+
+    println!(
+        "✓ Extracted blocks [{start}..{end}] → {} ({} bytes)",
+        output.display(),
+        artifact.len()
+    );
+}
+
+fn load_key_material(s: &str) -> Vec<u8> {
+    let s = s.trim();
+    if let Some(path) = s.strip_prefix('@') {
+        // Read as hex text from file
+        let content = fs::read_to_string(path).unwrap_or_else(|_| {
+            // Fallback: try reading as raw bytes if hex fails?
+            // No, @ implies text usually.
+            // But let's just use `fs::read` if it's a file path directly (no @).
+            panic!("Use valid file path for binary keys");
+        });
+        hex::decode(content.trim()).unwrap_or_else(|_| {
+            panic!("@file must contain hex string");
+        })
+    } else if let Some(var) = s.strip_prefix("env:") {
+        let content = std::env::var(var).expect("Env var not found");
+        hex::decode(content.trim()).expect("Env var must be hex")
+    } else if s == "-" {
+        let mut buf = Vec::new();
+        io::stdin()
+            .read_to_end(&mut buf)
+            .expect("Stdin read failed");
+        // Check if it looks like hex?
+        if let Ok(str_val) = std::str::from_utf8(&buf) {
+            if let Ok(bytes) = hex::decode(str_val.trim()) {
+                return bytes;
+            }
+        }
+        buf
+    } else {
+        // Try as file path first
+        if let Ok(bytes) = fs::read(s) {
+            return bytes;
+        }
+        // Try as hex
+        hex::decode(s).unwrap_or_else(|_| {
+            eprintln!("Could not read key from '{s}': not a file and not valid hex");
+            process::exit(1);
+        })
+    }
+}
+fn parse_key(s: &str) -> [u8; 32] {
+    let bytes = load_key_material(s);
+    bytes.try_into().unwrap_or_else(|v: Vec<u8>| {
+        eprintln!("Invalid key length: expected 32 bytes, got {}", v.len());
+        process::exit(1);
+    })
 }
