@@ -15,6 +15,7 @@ A binary container format in which validity and meaning depend on intrinsic rela
 | **Structural robustness** | Self-delimiting prefix codes (Family C) enable resynchronization after corruption |
 | **Tamper evidence** | Any modification — bit flip, reorder, truncate — invalidates the root |
 | **Provenance** | Copying produces a different root; transform receipts link old → new with signatures |
+| **Use Cases** | See [USE_CASES.md](USE_CASES.md) for 10 real-world scenarios |
 
 ## Quick Start
 
