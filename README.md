@@ -9,7 +9,7 @@ A binary container format in which validity and meaning depend on intrinsic rela
 ## Key Properties
 
 | Property | Mechanism |
-|----------|-----------|
+| :--- | :--- |
 | **Integrity** | Hash-chain commitments (Family A) bind every block to a single root |
 | **Random-access verification** | Merkle tree (Family B) enables O(log n) range proofs |
 | **Structural robustness** | Self-delimiting prefix codes (Family C) enable resynchronization after corruption |
@@ -53,7 +53,7 @@ cargo run -p cbc-cli -- transform -t subrange -i myfile.cbc -o subset.cbc -k myk
 
 ## Architecture
 
-```
+```text
 cobalt/
 ├── cbc-core/          Core format library
 │   ├── bootstrap.rs   64-byte Bootstrap Segment (§5.2)
@@ -89,7 +89,7 @@ let config = EncoderConfig {
 };
 
 let payload = std::fs::read("myfile.pdf").unwrap();
-let artifact = encoder::encode_random_nonce(&config, &payload, &[]);
+let artifact = encoder::encode_random_nonce(&config, &payload, &[]).unwrap();
 std::fs::write("myfile.cbc", &artifact).unwrap();
 
 // Decode
@@ -97,7 +97,21 @@ let decoded = decoder::decode(&artifact).unwrap();
 assert_eq!(decoded.payload, payload);
 ```
 
-### Streaming Encode
+### no_std Support
+
+`cbc-core` supports `no_std` environments (with `alloc`). To use it in a `no_std` project, disable default features and enable the `alloc` feature:
+
+```toml
+[dependencies]
+cbc-core = { version = "0.1.0", default-features = false, features = ["alloc"] }
+```
+
+> [!NOTE]
+> Compression via `zstd` is only available when the `std` feature is enabled.
+
+### Streaming Encode (One-Pass)
+
+Cobalt supports true **one-pass streaming**. The commitment material is stable even without knowing the final block count upfront, enabling high-performance pipelines.
 
 ```rust
 use cbc_core::{EncoderConfig, HashSuite, streaming::StreamingEncoder};
@@ -111,9 +125,11 @@ let config = EncoderConfig {
 };
 
 let mut enc = StreamingEncoder::new(&config, [0u8; 16]);
-enc.write_block(b"first chunk of data...");
-enc.write_block(b"second chunk...");
-let artifact = enc.finalize(&[]);
+// write_payload handles arbitrary buffer sizes and internal padding
+enc.write_payload(b"arbitrary data chunk...").unwrap();
+enc.write_payload(b"another chunk...").unwrap();
+
+let artifact = enc.finalize(&[]).unwrap();
 ```
 
 ### Range Proofs (Selective Disclosure)
@@ -149,7 +165,7 @@ receipt::verify_receipt(&receipt, cbc_core::HashSuite::Blake3).unwrap();
 ## Algorithms
 
 | Type | Supported |
-|------|-----------|
+| :--- | :--- |
 | Hash | BLAKE3 (default), SHA-256 |
 | Signature | ECDSA P-256 (mandatory), Ed25519 (optional) |
 

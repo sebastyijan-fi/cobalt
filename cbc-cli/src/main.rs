@@ -35,6 +35,12 @@ enum Commands {
         /// Comma-separated constraint families (A, A+B, A+B+C)
         #[arg(long, default_value = "A")]
         families: String,
+        /// Enable zstd compression
+        #[arg(long)]
+        compress: bool,
+        /// Encryption key (32 bytes as hex)
+        #[arg(long)]
+        encrypt_key: Option<String>,
     },
 
     /// Decode a CBC artifact and extract the payload
@@ -45,6 +51,9 @@ enum Commands {
         /// Output file for extracted payload
         #[arg(short, long)]
         output: PathBuf,
+        /// Decryption key (32 bytes as hex)
+        #[arg(long)]
+        decrypt_key: Option<String>,
     },
 
     /// Validate a CBC artifact (exit 0 if valid, 1 if invalid)
@@ -142,6 +151,12 @@ enum Commands {
         /// Comma-separated constraint families (A, A+B, A+B+C)
         #[arg(long, default_value = "A")]
         families: String,
+        /// Enable zstd compression
+        #[arg(long)]
+        compress: bool,
+        /// Encryption key (32 bytes as hex)
+        #[arg(long)]
+        encrypt_key: Option<String>,
     },
 }
 
@@ -185,9 +200,11 @@ fn main() {
             hash,
             block_size,
             families,
-        } => cmd_encode(input, output, hash, block_size, families),
+            compress,
+            encrypt_key,
+        } => cmd_encode(input, output, hash, block_size, families, compress, encrypt_key),
 
-        Commands::Decode { input, output } => cmd_decode(input, output),
+        Commands::Decode { input, output, decrypt_key } => cmd_decode(input, output, decrypt_key),
 
         Commands::Validate { input } => cmd_validate(input),
 
@@ -230,24 +247,49 @@ fn main() {
             hash,
             block_size,
             families,
-        } => cmd_stream_encode(input, output, hash, block_size, families),
+            compress,
+            encrypt_key,
+        } => cmd_stream_encode(input, output, hash, block_size, families, compress, encrypt_key),
     }
 }
 
-fn cmd_encode(input: PathBuf, output: PathBuf, hash: String, block_size: u32, families: String) {
+fn cmd_encode(
+    input: PathBuf,
+    output: PathBuf,
+    hash: String,
+    block_size: u32,
+    families: String,
+    compress: bool,
+    encrypt_key: Option<String>,
+) {
     let payload = fs::read(&input).unwrap_or_else(|e| {
         eprintln!("Error reading {}: {e}", input.display());
         process::exit(1);
+    });
+
+    let mut flags = 0;
+    if compress {
+        flags |= cbc_core::bootstrap::FLAG_COMPRESSED;
+    }
+
+    let key = encrypt_key.map(|s| {
+        flags |= cbc_core::bootstrap::FLAG_ENCRYPTED;
+        parse_key(&s)
     });
 
     let config = cbc_core::EncoderConfig {
         hash_suite: parse_hash(&hash),
         commitment_mode: parse_families(&families),
         block_payload_size: block_size,
-        flags: 0,
+        flags,
+        encryption_key: key,
     };
 
-    let artifact = cbc_core::encoder::encode_random_nonce(&config, &payload, &[]);
+    let artifact = cbc_core::encoder::encode_random_nonce(&config, &payload, &[])
+        .unwrap_or_else(|e| {
+            eprintln!("✗ Encoding failed: {e}");
+            process::exit(1);
+        });
 
     fs::write(&output, &artifact).unwrap_or_else(|e| {
         eprintln!("Error writing {}: {e}", output.display());
@@ -264,13 +306,15 @@ fn cmd_encode(input: PathBuf, output: PathBuf, hash: String, block_size: u32, fa
     );
 }
 
-fn cmd_decode(input: PathBuf, output: PathBuf) {
+fn cmd_decode(input: PathBuf, output: PathBuf, decrypt_key: Option<String>) {
     let data = fs::read(&input).unwrap_or_else(|e| {
         eprintln!("Error reading {}: {e}", input.display());
         process::exit(1);
     });
 
-    let decoded = cbc_core::decoder::decode(&data).unwrap_or_else(|e| {
+    let key = decrypt_key.map(|s| parse_key(&s));
+
+    let decoded = cbc_core::decoder::decode(&data, key).unwrap_or_else(|e| {
         eprintln!("✗ Validation failed: {e}");
         process::exit(1);
     });
@@ -347,7 +391,7 @@ fn cmd_inspect(input: PathBuf) {
             );
 
             // Try full validation
-            match cbc_core::decoder::decode(&data) {
+            match cbc_core::decoder::decode(&data, None) {
                 Ok(decoded) => {
                     println!("Chain root:        {}", hex::encode(decoded.chain_root));
                     if let Some(mr) = decoded.merkle_root {
@@ -596,7 +640,7 @@ fn cmd_prove(input: PathBuf, start: u32, end: u32, output: PathBuf) {
         process::exit(1);
     });
 
-    let decoded = cbc_core::decoder::decode(&data).unwrap_or_else(|e| {
+    let decoded = cbc_core::decoder::decode(&data, None).unwrap_or_else(|e| {
         eprintln!("✗ Validation failed: {e}");
         process::exit(1);
     });
@@ -652,7 +696,7 @@ fn cmd_verify_proof(input: PathBuf, proof_path: PathBuf) {
         process::exit(1);
     });
 
-    let decoded = cbc_core::decoder::decode(&data).unwrap_or_else(|e| {
+    let decoded = cbc_core::decoder::decode(&data, None).unwrap_or_else(|e| {
         eprintln!("✗ Validation failed: {e}");
         process::exit(1);
     });
@@ -709,14 +753,27 @@ fn cmd_stream_encode(
     hash: String,
     block_size: u32,
     families: String,
+    compress: bool,
+    encrypt_key: Option<String>,
 ) {
     use std::io::Read;
+
+    let mut flags = 0;
+    if compress {
+        flags |= cbc_core::bootstrap::FLAG_COMPRESSED;
+    }
+
+    let key = encrypt_key.map(|s| {
+        flags |= cbc_core::bootstrap::FLAG_ENCRYPTED;
+        parse_key(&s)
+    });
 
     let config = cbc_core::EncoderConfig {
         hash_suite: parse_hash(&hash),
         commitment_mode: parse_families(&families),
         block_payload_size: block_size,
-        flags: 0,
+        flags,
+        encryption_key: key,
     };
 
     let nonce = {
@@ -745,17 +802,26 @@ fn cmd_stream_encode(
         if n == 0 {
             break;
         }
-        enc.write_block(&buf[..n]);
+        enc.write_block(&buf[..n]).unwrap_or_else(|e| {
+            eprintln!("✗ Streaming encode failed: {e}");
+            process::exit(1);
+        });
         total_bytes += n;
     }
 
     // Handle empty file
     if enc.block_count() == 0 {
-        enc.write_block(&[]);
+        enc.write_block(&[]).unwrap_or_else(|e| {
+            eprintln!("✗ Streaming encode failed: {e}");
+            process::exit(1);
+        });
     }
 
     let block_count = enc.block_count();
-    let artifact = enc.finalize(&[]);
+    let artifact = enc.finalize(&[]).unwrap_or_else(|e| {
+        eprintln!("✗ Streaming finalization failed: {e}");
+        process::exit(1);
+    });
 
     fs::write(&output, &artifact).unwrap_or_else(|e| {
         eprintln!("Error writing {}: {e}", output.display());
@@ -785,4 +851,13 @@ fn compute_padded_payloads(payload: &[u8], block_payload_size: u32) -> Vec<Vec<u
             padded
         })
         .collect()
+}
+
+fn parse_key(s: &str) -> [u8; 32] {
+    let mut key = [0u8; 32];
+    hex::decode_to_slice(s, &mut key).unwrap_or_else(|e| {
+        eprintln!("Invalid encryption key (must be 64 hex characters): {e}");
+        process::exit(1);
+    });
+    key
 }

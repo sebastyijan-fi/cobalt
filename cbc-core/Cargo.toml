@@ -9,11 +9,24 @@ categories.workspace = true
 description = "Core library for CBC (Context-Bound Container) v0.1 — binary container format with intrinsic integrity"
 
 [dependencies]
-blake3 = "1"
-sha2 = "0.10"
+blake3 = { version = "1", default-features = false }
+sha2 = { version = "0.10", default-features = false }
 crc32c = "0.6"
-thiserror = "2"
-rand = "0.8"
+thiserror = { version = "2", optional = true }
+rand = { version = "0.8", default-features = false, optional = true }
+aes-gcm = { version = "0.10.3", default-features = false, features = ["aes"] }
+aead = { version = "0.5.2", default-features = false }
+zstd = { version = "0.13.3", optional = true }
+hex = { version = "0.4", default-features = false, features = ["alloc"] }
+
+[features]
+default = ["std"]
+std = ["blake3/std", "sha2/std", "thiserror", "rand/std", "rand/std_rng", "zstd", "aead/std", "aes-gcm/std"]
+alloc = ["aead/alloc", "aes-gcm/alloc"]
 
 [dev-dependencies]
-hex = "0.4"
+criterion = "0.5"
+
+[[bench]]
+name = "throughput"
+harness = false

@@ -32,13 +32,14 @@ fn test_reference_vector_minimal_artifact() {
         commitment_mode: FAMILY_A_BIT,
         block_payload_size: 512,
         flags: 0,
+        encryption_key: None,
     };
 
     let payload = vec![0x42u8; 512];
-    let artifact = encoder::encode(&config, &payload, nonce, &[]);
+    let artifact = encoder::encode(&config, &payload, nonce, &[]).unwrap();
 
     // Verify it's valid
-    let decoded = decoder::decode(&artifact).unwrap();
+    let decoded = decoder::decode(&artifact, None).unwrap();
     assert_eq!(decoded.payload, payload);
     assert_eq!(decoded.block_count, 1);
     assert_eq!(decoded.bootstrap.hash_suite, HashSuite::Blake3);
@@ -47,7 +48,7 @@ fn test_reference_vector_minimal_artifact() {
     assert_eq!(decoded.bootstrap.bootstrap_nonce, nonce);
 
     // Verify determinism: encoding same params produces identical bytes
-    let artifact2 = encoder::encode(&config, &payload, nonce, &[]);
+    let artifact2 = encoder::encode(&config, &payload, nonce, &[]).unwrap();
     assert_eq!(artifact, artifact2, "Encoding must be deterministic");
 
     // Verify structure sizes
@@ -69,9 +70,10 @@ fn make_test_artifact() -> (Vec<u8>, Vec<u8>) {
         commitment_mode: FAMILY_A_BIT | FAMILY_B_BIT,
         block_payload_size: 512,
         flags: 0,
+        encryption_key: None,
     };
     let payload = vec![0x42u8; 1024]; // 2 blocks
-    let artifact = encoder::encode(&config, &payload, [42u8; 16], &[]);
+    let artifact = encoder::encode(&config, &payload, [42u8; 16], &[]).unwrap();
     (artifact, payload)
 }
 
@@ -84,7 +86,7 @@ fn test_n1_bit_flip() {
     let payload_offset = BOOTSTRAP_SIZE + 16 + 100;
     artifact[payload_offset] ^= 0x01;
 
-    let result = decoder::decode(&artifact);
+    let result = decoder::decode(&artifact, None);
     assert!(result.is_err(), "N1: bit flip must be detected");
     println!("N1 PASS: {:?}", result.unwrap_err());
 }
@@ -103,7 +105,7 @@ fn test_n2_truncate_without_footer_update() {
     let mut truncated = artifact[..end_of_first_block].to_vec();
     truncated.extend_from_slice(&artifact[footer_start..]);
 
-    let result = decoder::decode(&truncated);
+    let result = decoder::decode(&truncated, None);
     assert!(
         result.is_err(),
         "N2: truncation without footer update must fail"
@@ -119,6 +121,7 @@ fn test_n3_swap_blocks() {
         commitment_mode: FAMILY_A_BIT,
         block_payload_size: 512,
         flags: 0,
+        encryption_key: None,
     };
     let payload = vec![0x42u8; 1536]; // 3 blocks, need different payloads
     let mut payload_varied = payload;
@@ -127,7 +130,7 @@ fn test_n3_swap_blocks() {
     payload_varied[512] = 0x43;
     payload_varied[1024] = 0x44;
 
-    let artifact = encoder::encode(&config, &payload_varied, [7u8; 16], &[]);
+    let artifact = encoder::encode(&config, &payload_varied, [7u8; 16], &[]).unwrap();
     let block_wire = cbc_core::block::block_wire_size(512);
 
     // Swap block 0 and block 1
@@ -141,7 +144,7 @@ fn test_n3_swap_blocks() {
     swapped[block0_start..block0_start + block_wire].copy_from_slice(&block1);
     swapped[block1_start..block1_start + block_wire].copy_from_slice(&block0);
 
-    let result = decoder::decode(&swapped);
+    let result = decoder::decode(&swapped, None);
     assert!(result.is_err(), "N3: block swap must be detected");
     println!("N3 PASS: {:?}", result.unwrap_err());
 }
@@ -154,10 +157,11 @@ fn test_n4_footer_substitution() {
         commitment_mode: FAMILY_A_BIT,
         block_payload_size: 512,
         flags: 0,
+        encryption_key: None,
     };
 
-    let artifact_a = encoder::encode(&config, &vec![0x41u8; 512], [1u8; 16], &[]);
-    let artifact_b = encoder::encode(&config, &vec![0x42u8; 512], [2u8; 16], &[]);
+    let artifact_a = encoder::encode(&config, &vec![0x41u8; 512], [1u8; 16], &[]).unwrap();
+    let artifact_b = encoder::encode(&config, &vec![0x42u8; 512], [2u8; 16], &[]).unwrap();
 
     let block_wire = cbc_core::block::block_wire_size(512);
     let footer_start = BOOTSTRAP_SIZE + block_wire;
@@ -166,7 +170,7 @@ fn test_n4_footer_substitution() {
     let mut franken = artifact_a[..footer_start].to_vec();
     franken.extend_from_slice(&artifact_b[footer_start..]);
 
-    let result = decoder::decode(&franken);
+    let result = decoder::decode(&franken, None);
     assert!(result.is_err(), "N4: footer substitution must be detected");
     println!("N4 PASS: {:?}", result.unwrap_err());
 }
@@ -179,9 +183,10 @@ fn test_n5_subrange_as_complete() {
         commitment_mode: FAMILY_A_BIT | FAMILY_B_BIT,
         block_payload_size: 512,
         flags: 0,
+        encryption_key: None,
     };
     let payload = vec![0x42u8; 2048]; // 4 blocks
-    let artifact = encoder::encode(&config, &payload, [5u8; 16], &[]);
+    let artifact = encoder::encode(&config, &payload, [5u8; 16], &[]).unwrap();
 
     // Try to present blocks 0-1 as a complete 4-block artifact
     // by copying bootstrap + 2 blocks + footer
@@ -192,7 +197,7 @@ fn test_n5_subrange_as_complete() {
     let mut subset = artifact[..two_blocks_end].to_vec();
     subset.extend_from_slice(&artifact[footer_start..]);
 
-    let result = decoder::decode(&subset);
+    let result = decoder::decode(&subset, None);
     assert!(result.is_err(), "N5: subrange as complete must be detected");
     println!("N5 PASS: {:?}", result.unwrap_err());
 }
@@ -214,12 +219,13 @@ fn test_all_families_all_hashes() {
                 commitment_mode: mode,
                 block_payload_size: 512,
                 flags: 0,
+                encryption_key: None,
             };
 
             for payload_size in [0, 100, 512, 1024, 4096] {
                 let payload = vec![0xAB; payload_size];
-                let artifact = encoder::encode(&config, &payload, [99u8; 16], &[]);
-                let decoded = decoder::decode(&artifact).unwrap();
+                let artifact = encoder::encode(&config, &payload, [99u8; 16], &[]).unwrap();
+                let decoded = decoder::decode(&artifact, None).unwrap();
                 assert_eq!(
                     decoded.payload, payload,
                     "Failed for suite={suite:?} mode=0x{mode:02x} payload_size={payload_size}"
@@ -237,10 +243,11 @@ fn test_larger_block_sizes() {
             commitment_mode: FAMILY_A_BIT,
             block_payload_size: block_size,
             flags: 0,
+            encryption_key: None,
         };
         let payload = vec![0x55; 10000];
-        let artifact = encoder::encode(&config, &payload, [0u8; 16], &[]);
-        let decoded = decoder::decode(&artifact).unwrap();
+        let artifact = encoder::encode(&config, &payload, [0u8; 16], &[]).unwrap();
+        let decoded = decoder::decode(&artifact, None).unwrap();
         assert_eq!(decoded.payload, payload);
     }
 }

@@ -1,4 +1,3 @@
-/// Bootstrap Segment — the fixed 64-byte preamble of every CBC artifact (§5.2).
 use crate::error::{CbcError, Result};
 use crate::hash::HashSuite;
 
@@ -36,11 +35,18 @@ pub struct BootstrapSegment {
 }
 
 impl BootstrapSegment {
-    /// Returns canonical params: bytes 0..40 of the encoded bootstrap segment.
+    /// Returns canonical params for commitment and MAC purposes.
+    /// Bytes 12..16 (block_count) are zeroed out to enable one-pass streaming.
     pub fn params_canonical(&self) -> [u8; 40] {
-        let full = self.encode();
         let mut params = [0u8; 40];
-        params.copy_from_slice(&full[..40]);
+        params[0..4].copy_from_slice(&MAGIC);
+        params[4..6].copy_from_slice(&VERSION.to_le_bytes());
+        params[6] = self.hash_suite.id();
+        params[7] = self.commitment_mode;
+        params[8..12].copy_from_slice(&self.block_payload_size.to_le_bytes());
+        // 12..16 reserved (zeroed block_count)
+        params[16..32].copy_from_slice(&self.bootstrap_nonce);
+        params[32..36].copy_from_slice(&self.flags.to_le_bytes());
         params
     }
 
@@ -92,8 +98,8 @@ impl BootstrapSegment {
         // Already zero
         // Offset 40: params_mac (16 bytes)
         let mac = {
-            let params = &buf[..40];
-            let hash = self.hash_suite.hash(&[b"CBC-v1-params-mac", params]);
+            let params = self.params_canonical();
+            let hash = self.hash_suite.hash(&[b"CBC-v1-params-mac", &params]);
             let mut mac = [0u8; 16];
             mac.copy_from_slice(&hash[..16]);
             mac

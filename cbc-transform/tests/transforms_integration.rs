@@ -18,11 +18,12 @@ fn make_source(payload_size: usize) -> (Vec<u8>, Vec<u8>) {
         commitment_mode: FAMILY_A_BIT | FAMILY_B_BIT,
         block_payload_size: 512,
         flags: 0,
+        encryption_key: None,
     };
     let payload = (0..payload_size)
         .map(|i| (i % 256) as u8)
         .collect::<Vec<_>>();
-    let artifact = encoder::encode(&config, &payload, [42u8; 16], &[]);
+    let artifact = encoder::encode(&config, &payload, [42u8; 16], &[]).unwrap();
     (artifact, payload)
 }
 
@@ -34,14 +35,14 @@ fn signing_key() -> cbc_transform::SigningKey {
 #[test]
 fn test_t1_truncation() {
     let (source, _payload) = make_source(2048); // 4 blocks @ 512
-    let source_decoded = decoder::decode(&source).unwrap();
+    let source_decoded = decoder::decode(&source, None).unwrap();
     assert_eq!(source_decoded.block_count, 4);
 
     let key = signing_key();
     let (derived, receipt) = cbc_transform::truncate(&source, 2, &key).unwrap();
 
     // Derived is valid
-    let derived_decoded = decoder::decode(&derived).unwrap();
+    let derived_decoded = decoder::decode(&derived, None).unwrap();
     assert_eq!(derived_decoded.block_count, 2);
 
     // Different root
@@ -64,12 +65,12 @@ fn test_t1_truncation() {
 #[test]
 fn test_t2_rechunk() {
     let (source, payload) = make_source(2048); // 4 blocks @ 512
-    let source_decoded = decoder::decode(&source).unwrap();
+    let source_decoded = decoder::decode(&source, None).unwrap();
 
     let key = signing_key();
     let (derived, receipt) = cbc_transform::rechunk(&source, 1024, &key).unwrap();
 
-    let derived_decoded = decoder::decode(&derived).unwrap();
+    let derived_decoded = decoder::decode(&derived, None).unwrap();
     assert_eq!(derived_decoded.block_count, 2); // 2048 / 1024 = 2
     assert_eq!(derived_decoded.bootstrap.block_payload_size, 1024);
 
@@ -88,12 +89,12 @@ fn test_t2_rechunk() {
 #[test]
 fn test_t3_recompress() {
     let (source, payload) = make_source(1024);
-    let source_decoded = decoder::decode(&source).unwrap();
+    let source_decoded = decoder::decode(&source, None).unwrap();
 
     let key = signing_key();
     let (derived, receipt) = cbc_transform::recompress(&source, &key).unwrap();
 
-    let derived_decoded = decoder::decode(&derived).unwrap();
+    let derived_decoded = decoder::decode(&derived, None).unwrap();
     assert_eq!(derived_decoded.payload, payload);
 
     // Different root (new nonce)
@@ -113,7 +114,7 @@ fn test_t4_concatenation() {
     let key = signing_key();
     let (derived, receipts) = cbc_transform::concatenate(&[&source_a, &source_b], &key).unwrap();
 
-    let derived_decoded = decoder::decode(&derived).unwrap();
+    let derived_decoded = decoder::decode(&derived, None).unwrap();
 
     // Payload is concatenation
     let mut expected = payload_a.clone();
@@ -134,13 +135,13 @@ fn test_t4_concatenation() {
 #[test]
 fn test_t5_subrange_extract() {
     let (source, payload) = make_source(2048); // 4 blocks @ 512
-    let source_decoded = decoder::decode(&source).unwrap();
+    let source_decoded = decoder::decode(&source, None).unwrap();
     assert_eq!(source_decoded.block_count, 4);
 
     let key = signing_key();
     let (derived, receipt) = cbc_transform::subrange_extract(&source, 1, 2, &key).unwrap();
 
-    let derived_decoded = decoder::decode(&derived).unwrap();
+    let derived_decoded = decoder::decode(&derived, None).unwrap();
     assert_eq!(derived_decoded.block_count, 2);
 
     // Payload is blocks 1-2 from source (bytes 512..1536)
@@ -162,17 +163,17 @@ fn test_t5_subrange_extract() {
 #[test]
 fn test_receipt_chain_provenance() {
     let (source_a, _) = make_source(2048); // 4 blocks
-    let a_decoded = decoder::decode(&source_a).unwrap();
+    let a_decoded = decoder::decode(&source_a, None).unwrap();
 
     let key = signing_key();
 
     // A → B: subrange extract blocks 0..2
     let (artifact_b, receipt_ab) = cbc_transform::subrange_extract(&source_a, 0, 2, &key).unwrap();
-    let b_decoded = decoder::decode(&artifact_b).unwrap();
+    let b_decoded = decoder::decode(&artifact_b, None).unwrap();
 
     // B → C: rechunk to 1024-byte blocks
     let (artifact_c, receipt_bc) = cbc_transform::rechunk(&artifact_b, 1024, &key).unwrap();
-    let c_decoded = decoder::decode(&artifact_c).unwrap();
+    let c_decoded = decoder::decode(&artifact_c, None).unwrap();
 
     // Verify lineage: C → B → A
     assert_eq!(receipt_bc.source_root, b_decoded.chain_root);

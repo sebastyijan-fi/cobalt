@@ -1,6 +1,7 @@
 /// Stream Footer — appears after the last block in a CBC artifact (§5.4).
 use crate::error::{CbcError, Result};
 use crate::hash::HashSuite;
+use alloc::vec::Vec;
 
 /// Footer magic bytes: "CBCF" (0x43 0x42 0x43 0x46).
 pub const FOOTER_MAGIC: [u8; 4] = [0x43, 0x42, 0x43, 0x46];
@@ -219,6 +220,7 @@ impl StreamFooter {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloc::vec;
 
     #[test]
     fn test_footer_roundtrip_no_merkle() {

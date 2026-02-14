@@ -4,6 +4,9 @@
 //! - **BLAKE3** (0x01) — default, high-performance
 //! - **SHA-256** (0x02) — widely deployed, NIST-approved
 
+use blake3;
+use sha2::{Digest, Sha256};
+
 /// Hash algorithm identifier (§8.1).
 ///
 /// Used throughout the format for all commitment, chain, and Merkle computations.
@@ -40,7 +43,6 @@ impl HashSuite {
                 *hasher.finalize().as_bytes()
             }
             Self::Sha256 => {
-                use sha2::{Digest, Sha256};
                 let mut hasher = Sha256::new();
                 for part in parts {
                     hasher.update(part);

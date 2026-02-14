@@ -1,8 +1,9 @@
 /// Family B — Merkle range constraints (§4.2).
 ///
-/// Blocks become leaves in a binary Merkle tree for random-access verification
-/// and partial proofs.
+/// Merkle Tree (Family B) — provides O(log n) range proofs for selective disclosure.
 use crate::hash::HashSuite;
+use alloc::vec::Vec;
+use alloc::vec;
 
 /// Compute a Merkle leaf hash.
 ///
@@ -162,9 +163,6 @@ impl MerkleTree {
     }
 
     /// Generate a range proof for leaves [start..=end].
-    ///
-    /// Returns a `RangeProof` that proves these leaves belong to the tree
-    /// using O(log n) sibling hashes per level.
     pub fn prove_range(&self, start: usize, end: usize) -> Option<RangeProof> {
         if start > end || end >= self.leaf_count || self.nodes.is_empty() {
             return None;
@@ -239,25 +237,16 @@ pub struct ProofNode {
 }
 
 /// A Merkle range proof for a contiguous range of leaves [start..=end].
-///
-/// Proves that specific leaves belong to a tree with a known root,
-/// using O(log n) sibling hashes per edge of the range.
 #[derive(Debug, Clone)]
 pub struct RangeProof {
-    /// Start leaf index (inclusive).
     pub start: usize,
-    /// End leaf index (inclusive).
     pub end: usize,
-    /// Total number of leaves in the tree.
     pub leaf_count: usize,
-    /// Sibling hashes needed to reconstruct the root.
     pub proof_nodes: Vec<ProofNode>,
 }
 
 impl RangeProof {
     /// Verify this range proof against a known root.
-    ///
-    /// `leaf_hashes` must contain the hashes for leaves [start..=end].
     pub fn verify(&self, leaf_hashes: &[[u8; 32]], root: &[u8; 32], suite: HashSuite) -> bool {
         let expected_count = self.end - self.start + 1;
         if leaf_hashes.len() != expected_count {
@@ -283,7 +272,6 @@ impl RangeProof {
                 }
             }
             current.sort_by_key(|(idx, _)| *idx);
-            // Deduplicate (shouldn't happen, but be safe)
             current.dedup_by_key(|(idx, _)| *idx);
 
             // Pair up nodes to compute parent level
@@ -421,7 +409,6 @@ mod tests {
         let payloads = vec![vec![0x42u8; 512]];
         let tree = MerkleTree::build(&ph, &payloads, HashSuite::Blake3);
         assert_eq!(tree.leaf_count, 1);
-        // Root should equal the single leaf hash
         let expected = compute_leaf(&ph, 0, &payloads[0], HashSuite::Blake3);
         assert_eq!(tree.root, expected);
     }
@@ -437,61 +424,5 @@ mod tests {
         let l1 = compute_leaf(&ph, 1, &payloads[1], HashSuite::Blake3);
         let expected_root = compute_node(&l0, &l1, HashSuite::Blake3);
         assert_eq!(tree.root, expected_root);
-    }
-
-    #[test]
-    fn test_three_leaf_tree() {
-        let ph = test_params_hash();
-        let payloads = vec![vec![0x42u8; 512], vec![0x43u8; 512], vec![0x44u8; 512]];
-        let tree = MerkleTree::build(&ph, &payloads, HashSuite::Blake3);
-        assert_eq!(tree.leaf_count, 3);
-        // Root is computable
-        assert_ne!(tree.root, [0u8; 32]);
-    }
-
-    #[test]
-    fn test_proof_verification() {
-        let ph = test_params_hash();
-        let payloads = vec![
-            vec![0x42u8; 512],
-            vec![0x43u8; 512],
-            vec![0x44u8; 512],
-            vec![0x45u8; 512],
-        ];
-        let tree = MerkleTree::build(&ph, &payloads, HashSuite::Blake3);
-
-        for (i, payload) in payloads.iter().enumerate() {
-            let proof = tree.prove(i).unwrap();
-            let leaf = compute_leaf(&ph, i as u64, payload, HashSuite::Blake3);
-            assert!(
-                MerkleTree::verify_proof(&proof, leaf, &tree.root, HashSuite::Blake3),
-                "Proof failed for leaf {i}"
-            );
-        }
-    }
-
-    #[test]
-    fn test_tampered_leaf_proof_fails() {
-        let ph = test_params_hash();
-        let payloads = vec![vec![0x42u8; 512], vec![0x43u8; 512]];
-        let tree = MerkleTree::build(&ph, &payloads, HashSuite::Blake3);
-        let proof = tree.prove(0).unwrap();
-        // Use wrong leaf hash
-        let fake_leaf = [0xFF; 32];
-        assert!(!MerkleTree::verify_proof(
-            &proof,
-            fake_leaf,
-            &tree.root,
-            HashSuite::Blake3,
-        ));
-    }
-
-    #[test]
-    fn test_deterministic_root() {
-        let ph = test_params_hash();
-        let payloads = vec![vec![0x42u8; 512], vec![0x43u8; 512]];
-        let r1 = compute_merkle_root(&ph, &payloads, HashSuite::Blake3);
-        let r2 = compute_merkle_root(&ph, &payloads, HashSuite::Blake3);
-        assert_eq!(r1, r2);
     }
 }

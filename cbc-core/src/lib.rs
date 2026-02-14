@@ -20,12 +20,17 @@
 //!     commitment_mode: FAMILY_A_BIT,
 //!     block_payload_size: 4096,
 //!     flags: 0,
+//!     encryption_key: None,
 //! };
 //!
-//! let artifact = encoder::encode(&config, b"hello world", [0u8; 16], &[]);
-//! let decoded = decoder::decode(&artifact).unwrap();
+//! let artifact = encoder::encode(&config, b"hello world", [0u8; 16], &[]).unwrap();
+//! let decoded = decoder::decode(&artifact, None).unwrap();
 //! assert_eq!(decoded.payload, b"hello world");
 //! ```
+
+#![cfg_attr(not(feature = "std"), no_std)]
+
+extern crate alloc;
 
 pub mod block;
 pub mod bootstrap;

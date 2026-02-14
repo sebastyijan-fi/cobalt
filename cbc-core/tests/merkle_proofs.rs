@@ -211,10 +211,11 @@ fn test_end_to_end_selective_disclosure() {
         commitment_mode: FAMILY_A_BIT | FAMILY_B_BIT,
         block_payload_size: 512,
         flags: 0,
+        encryption_key: None,
     };
     let payload = (0..4096u32).map(|i| (i % 256) as u8).collect::<Vec<_>>();
-    let artifact = encoder::encode(&config, &payload, [42u8; 16], &[]);
-    let decoded = cbc_core::decoder::decode(&artifact).unwrap();
+    let artifact = encoder::encode(&config, &payload, [42u8; 16], &[]).unwrap();
+    let decoded = cbc_core::decoder::decode(&artifact, None).unwrap();
 
     // Build tree from decoded blocks
     let block_count = decoded.block_count as usize;

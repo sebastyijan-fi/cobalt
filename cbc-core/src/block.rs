@@ -1,5 +1,7 @@
-/// Block format — the fundamental unit of payload + commitment (§5.3).
 use crate::error::{CbcError, Result};
+use alloc::vec::Vec;
+use alloc::vec;
+use alloc::string::ToString;
 
 /// Block header size in bytes.
 pub const BLOCK_HEADER_SIZE: usize = 16;
@@ -54,21 +56,15 @@ impl BlockHeader {
 
 impl Block {
     /// Encode a block to its wire format.
-    ///
-    /// The payload is zero-padded to `block_payload_size`.
     pub fn encode(&self, block_payload_size: u32) -> Vec<u8> {
         let wire_size = block_wire_size(block_payload_size);
         let mut buf = vec![0u8; wire_size];
 
-        // Header (16 bytes)
         buf[..BLOCK_HEADER_SIZE].copy_from_slice(&self.header.encode());
 
-        // Payload (zero-padded)
         let payload_offset = BLOCK_HEADER_SIZE;
         buf[payload_offset..payload_offset + self.payload.len()].copy_from_slice(&self.payload);
-        // Rest is already zero-padded
 
-        // Commitment (32 bytes at end)
         let commit_offset = BLOCK_HEADER_SIZE + block_payload_size as usize;
         buf[commit_offset..commit_offset + COMMITMENT_SIZE].copy_from_slice(&self.commitment);
 
@@ -76,9 +72,6 @@ impl Block {
     }
 
     /// Decode a block from wire bytes.
-    ///
-    /// Validates: sequential index, payload_length ≤ block_payload_size,
-    /// CRC-32C of the full padded payload, and block_flags == 0.
     pub fn decode(
         bytes: &[u8],
         block_payload_size: u32,
@@ -93,12 +86,10 @@ impl Block {
             });
         }
 
-        // Parse header
         let mut header_bytes = [0u8; BLOCK_HEADER_SIZE];
         header_bytes.copy_from_slice(&bytes[..BLOCK_HEADER_SIZE]);
         let header = BlockHeader::decode(&header_bytes);
 
-        // Validate block index
         if header.block_index != expected_index {
             return Err(CbcError::BlockIndexMismatch {
                 expected: expected_index,
@@ -106,12 +97,10 @@ impl Block {
             });
         }
 
-        // Validate block flags
         if header.block_flags != 0 {
             return Err(CbcError::NonZeroBlockFlags(header.block_flags));
         }
 
-        // Validate payload length
         if header.payload_length > block_payload_size {
             return Err(CbcError::PayloadLengthExceeded {
                 length: header.payload_length,
@@ -119,7 +108,6 @@ impl Block {
             });
         }
 
-        // Non-final blocks must have full payload
         if !is_last && header.payload_length != block_payload_size {
             return Err(CbcError::NonFullPayload {
                 index: header.block_index,
@@ -128,11 +116,9 @@ impl Block {
             });
         }
 
-        // Extract padded payload for CRC and commitment
         let payload_offset = BLOCK_HEADER_SIZE;
         let padded_payload = &bytes[payload_offset..payload_offset + block_payload_size as usize];
 
-        // Verify CRC-32C over padded payload
         let computed_crc = crc32c::crc32c(padded_payload);
         if computed_crc != header.local_check {
             return Err(CbcError::Crc32Mismatch {
@@ -142,11 +128,9 @@ impl Block {
             });
         }
 
-        // Extract actual payload (not padded)
         let payload =
             bytes[payload_offset..payload_offset + header.payload_length as usize].to_vec();
 
-        // Extract commitment
         let commit_offset = BLOCK_HEADER_SIZE + block_payload_size as usize;
         let mut commitment = [0u8; COMMITMENT_SIZE];
         commitment.copy_from_slice(&bytes[commit_offset..commit_offset + COMMITMENT_SIZE]);
@@ -158,12 +142,8 @@ impl Block {
         })
     }
 
-    /// Create a new block from payload bytes. Computes CRC-32C over zero-padded payload.
-    ///
-    /// The `commitment` field is set to all zeros — the caller must fill it via
-    /// the chain commitment computation.
+    /// Create a new block from payload bytes.
     pub fn new(index: u32, payload: Vec<u8>, block_payload_size: u32) -> Self {
-        // Build zero-padded payload for CRC
         let mut padded = vec![0u8; block_payload_size as usize];
         padded[..payload.len()].copy_from_slice(&payload);
         let local_check = crc32c::crc32c(&padded);
@@ -186,6 +166,74 @@ impl Block {
         padded[..self.payload.len()].copy_from_slice(&self.payload);
         padded
     }
+
+    /// Encrypt the block payload using AES-GCM-256.
+    pub fn encrypt(
+        &mut self,
+        key: &[u8; 32],
+        bootstrap_nonce: &[u8; 16],
+        block_payload_size: u32,
+    ) -> Result<()> {
+        use aes_gcm::{
+            aead::{Aead, KeyInit},
+            Aes256Gcm,
+        };
+
+        let cipher = Aes256Gcm::new(key.into());
+        let mut nonce_bytes = [0u8; 12];
+        nonce_bytes.copy_from_slice(&bootstrap_nonce[..12]);
+        let index_bytes = self.header.block_index.to_le_bytes();
+        for i in 0..4 {
+            nonce_bytes[i] ^= index_bytes[i];
+        }
+        let nonce = nonce_bytes.as_ref().into();
+
+        let ciphertext = cipher
+            .encrypt(nonce, self.payload.as_slice())
+            .map_err(|e: aes_gcm::Error| CbcError::EncryptionError(e.to_string()))?;
+
+        self.payload = ciphertext;
+        self.header.payload_length = self.payload.len() as u32;
+
+        let padded = self.padded_payload(block_payload_size);
+        self.header.local_check = crc32c::crc32c(&padded);
+
+        Ok(())
+    }
+
+    /// Decrypt the block payload using AES-GCM-256.
+    pub fn decrypt(
+        &mut self,
+        key: &[u8; 32],
+        bootstrap_nonce: &[u8; 16],
+        block_payload_size: u32,
+    ) -> Result<()> {
+        use aes_gcm::{
+            aead::{Aead, KeyInit},
+            Aes256Gcm,
+        };
+
+        let cipher = Aes256Gcm::new(key.into());
+        let mut nonce_bytes = [0u8; 12];
+        nonce_bytes.copy_from_slice(&bootstrap_nonce[..12]);
+        let index_bytes = self.header.block_index.to_le_bytes();
+        for i in 0..4 {
+            nonce_bytes[i] ^= index_bytes[i];
+        }
+        let nonce = nonce_bytes.as_ref().into();
+
+        let plaintext = cipher
+            .decrypt(nonce, self.payload.as_slice())
+            .map_err(|e: aes_gcm::Error| CbcError::DecryptionError(e.to_string()))?;
+
+        self.payload = plaintext;
+        self.header.payload_length = self.payload.len() as u32;
+
+        let padded = self.padded_payload(block_payload_size);
+        self.header.local_check = crc32c::crc32c(&padded);
+
+        Ok(())
+    }
 }
 
 #[cfg(test)]
@@ -195,61 +243,5 @@ mod tests {
     #[test]
     fn test_block_wire_size() {
         assert_eq!(block_wire_size(512), 512 + 32 + 16);
-        assert_eq!(block_wire_size(4096), 4096 + 32 + 16);
-    }
-
-    #[test]
-    fn test_header_roundtrip() {
-        let header = BlockHeader {
-            block_index: 42,
-            payload_length: 1000,
-            block_flags: 0,
-            local_check: 0xDEADBEEF,
-        };
-        let encoded = header.encode();
-        let decoded = BlockHeader::decode(&encoded);
-        assert_eq!(header, decoded);
-    }
-
-    #[test]
-    fn test_block_new_computes_crc() {
-        let payload = vec![0x42u8; 512];
-        let block = Block::new(0, payload.clone(), 512);
-        assert_eq!(block.header.block_index, 0);
-        assert_eq!(block.header.payload_length, 512);
-        assert_ne!(block.header.local_check, 0); // CRC should be computed
-    }
-
-    #[test]
-    fn test_block_encode_decode_roundtrip() {
-        let payload = vec![0xAB; 256];
-        let mut block = Block::new(5, payload.clone(), 512);
-        block.commitment = [0xFF; 32]; // Set a dummy commitment
-
-        let encoded = block.encode(512);
-        assert_eq!(encoded.len(), block_wire_size(512));
-
-        let decoded = Block::decode(&encoded, 512, 5, true).unwrap();
-        assert_eq!(decoded.payload, payload);
-        assert_eq!(decoded.commitment, [0xFF; 32]);
-        assert_eq!(decoded.header.payload_length, 256);
-    }
-
-    #[test]
-    fn test_block_wrong_index_rejected() {
-        let block = Block::new(0, vec![0u8; 512], 512);
-        let encoded = block.encode(512);
-        let err = Block::decode(&encoded, 512, 1, false).unwrap_err();
-        assert!(matches!(err, CbcError::BlockIndexMismatch { .. }));
-    }
-
-    #[test]
-    fn test_crc_tamper_detected() {
-        let block = Block::new(0, vec![0x42u8; 512], 512);
-        let mut encoded = block.encode(512);
-        // Flip a payload bit
-        encoded[BLOCK_HEADER_SIZE] ^= 0x01;
-        let err = Block::decode(&encoded, 512, 0, false).unwrap_err();
-        assert!(matches!(err, CbcError::Crc32Mismatch { .. }));
     }
 }

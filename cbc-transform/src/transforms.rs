@@ -32,7 +32,7 @@ fn transform_reencode(
     signing_key: &SigningKey,
     existing_receipts: Vec<Vec<u8>>,
 ) -> Result<(Vec<u8>, Receipt)> {
-    let decoded_source = decoder::decode(source)?;
+    let decoded_source = decoder::decode(source, None)?;
     let (source_chain_root, source_merkle_root) = extract_roots(&decoded_source);
 
     // Generate new nonce
@@ -41,8 +41,8 @@ fn transform_reencode(
     rand::thread_rng().fill_bytes(&mut nonce);
 
     // Encode the new artifact without receipts first to get the derived root
-    let temp_artifact = encoder::encode(new_config, new_payload, nonce, &[]);
-    let decoded_derived = decoder::decode(&temp_artifact)?;
+    let temp_artifact = encoder::encode(new_config, new_payload, nonce, &[])?;
+    let decoded_derived = decoder::decode(&temp_artifact, None)?;
     let (derived_chain_root, derived_merkle_root) = extract_roots(&decoded_derived);
 
     // Create receipt
@@ -66,7 +66,7 @@ fn transform_reencode(
     }
     all_receipts.push(receipt.encode());
 
-    let final_artifact = encoder::encode(new_config, new_payload, nonce, &all_receipts);
+    let final_artifact = encoder::encode(new_config, new_payload, nonce, &all_receipts)?;
 
     Ok((final_artifact, receipt))
 }
@@ -77,7 +77,7 @@ pub fn truncate(
     keep_blocks: u32,
     signing_key: &SigningKey,
 ) -> Result<(Vec<u8>, Receipt)> {
-    let decoded = decoder::decode(source)?;
+    let decoded = decoder::decode(source, None)?;
     let block_payload_size = decoded.bootstrap.block_payload_size;
 
     if keep_blocks == 0 || keep_blocks >= decoded.block_count {
@@ -108,6 +108,7 @@ pub fn truncate(
         commitment_mode: decoded.bootstrap.commitment_mode,
         block_payload_size,
         flags: decoded.bootstrap.flags,
+        encryption_key: None,
     };
 
     let desc = keep_blocks.to_le_bytes().to_vec();
@@ -128,7 +129,7 @@ pub fn rechunk(
     new_block_size: u32,
     signing_key: &SigningKey,
 ) -> Result<(Vec<u8>, Receipt)> {
-    let decoded = decoder::decode(source)?;
+    let decoded = decoder::decode(source, None)?;
 
     let mut desc = Vec::new();
     desc.extend_from_slice(&decoded.bootstrap.block_payload_size.to_le_bytes());
@@ -139,6 +140,7 @@ pub fn rechunk(
         commitment_mode: decoded.bootstrap.commitment_mode,
         block_payload_size: new_block_size,
         flags: decoded.bootstrap.flags,
+        encryption_key: None,
     };
 
     transform_reencode(
@@ -157,7 +159,7 @@ pub fn rechunk(
 /// Note: actual compression/decompression is not implemented in v0.1;
 /// this toggles the flag and re-encodes (payload bytes unchanged).
 pub fn recompress(source: &[u8], signing_key: &SigningKey) -> Result<(Vec<u8>, Receipt)> {
-    let decoded = decoder::decode(source)?;
+    let decoded = decoder::decode(source, None)?;
 
     let new_flags = decoded.bootstrap.flags ^ cbc_core::bootstrap::FLAG_COMPRESSED;
 
@@ -166,6 +168,7 @@ pub fn recompress(source: &[u8], signing_key: &SigningKey) -> Result<(Vec<u8>, R
         commitment_mode: decoded.bootstrap.commitment_mode,
         block_payload_size: decoded.bootstrap.block_payload_size,
         flags: new_flags,
+        encryption_key: None,
     };
 
     let desc = new_flags.to_le_bytes().to_vec();
@@ -193,7 +196,7 @@ pub fn concatenate(sources: &[&[u8]], signing_key: &SigningKey) -> Result<(Vec<u
     let mut combined_payload = Vec::new();
 
     for src in sources {
-        let decoded = decoder::decode(src)?;
+        let decoded = decoder::decode(src, None)?;
         combined_payload.extend_from_slice(&decoded.payload);
         decoded_sources.push(decoded);
     }
@@ -205,6 +208,7 @@ pub fn concatenate(sources: &[&[u8]], signing_key: &SigningKey) -> Result<(Vec<u
         commitment_mode: first.bootstrap.commitment_mode,
         block_payload_size: first.bootstrap.block_payload_size,
         flags: first.bootstrap.flags,
+        encryption_key: None,
     };
 
     // Generate new nonce and encode
@@ -212,8 +216,8 @@ pub fn concatenate(sources: &[&[u8]], signing_key: &SigningKey) -> Result<(Vec<u
     use rand::RngCore;
     rand::thread_rng().fill_bytes(&mut nonce);
 
-    let temp = encoder::encode(&config, &combined_payload, nonce, &[]);
-    let decoded_derived = decoder::decode(&temp)?;
+    let temp = encoder::encode(&config, &combined_payload, nonce, &[])?;
+    let decoded_derived = decoder::decode(&temp, None)?;
     let (derived_chain_root, derived_merkle_root) = extract_roots(&decoded_derived);
 
     // Build transform descriptor with all source roots
@@ -252,7 +256,7 @@ pub fn concatenate(sources: &[&[u8]], signing_key: &SigningKey) -> Result<(Vec<u
 
     let final_artifact = encoder::encode(&config, &combined_payload, nonce, &receipt_bytes);
 
-    Ok((final_artifact, receipts))
+    Ok((final_artifact?, receipts))
 }
 
 /// T5: Subrange extraction (§9.1).
@@ -262,7 +266,7 @@ pub fn subrange_extract(
     end_block: u32, // inclusive
     signing_key: &SigningKey,
 ) -> Result<(Vec<u8>, Receipt)> {
-    let decoded = decoder::decode(source)?;
+    let decoded = decoder::decode(source, None)?;
     let block_payload_size = decoded.bootstrap.block_payload_size;
 
     if start_block > end_block || end_block >= decoded.block_count {
@@ -283,6 +287,7 @@ pub fn subrange_extract(
         commitment_mode: decoded.bootstrap.commitment_mode,
         block_payload_size,
         flags: decoded.bootstrap.flags,
+        encryption_key: None,
     };
 
     // Descriptor: start_block (u32 LE) + end_block (u32 LE)
@@ -312,8 +317,9 @@ mod tests {
             commitment_mode: FAMILY_A_BIT,
             block_payload_size: 512,
             flags: 0,
+            encryption_key: None,
         };
-        encoder::encode(&config, payload, [42u8; 16], &[])
+        encoder::encode(&config, payload, [42u8; 16], &[]).unwrap()
     }
 
     fn test_key() -> SigningKey {
@@ -329,12 +335,12 @@ mod tests {
         let (derived, receipt) = truncate(&artifact, 2, &key).unwrap();
 
         // Derived artifact is valid
-        let decoded = decoder::decode(&derived).unwrap();
+        let decoded = decoder::decode(&derived, None).unwrap();
         assert_eq!(decoded.block_count, 2);
         assert_eq!(decoded.payload.len(), 1024);
 
         // Roots differ
-        let original = decoder::decode(&artifact).unwrap();
+        let original = decoder::decode(&artifact, None).unwrap();
         assert_ne!(original.chain_root, decoded.chain_root);
 
         // Receipt verifies
@@ -351,7 +357,7 @@ mod tests {
 
         let (derived, receipt) = rechunk(&artifact, 1024, &key).unwrap();
 
-        let decoded = decoder::decode(&derived).unwrap();
+        let decoded = decoder::decode(&derived, None).unwrap();
         assert_eq!(decoded.bootstrap.block_payload_size, 1024);
         assert_eq!(decoded.payload, payload); // Payload unchanged
 
@@ -366,7 +372,7 @@ mod tests {
 
         let (derived, receipt) = recompress(&artifact, &key).unwrap();
 
-        let decoded = decoder::decode(&derived).unwrap();
+        let decoded = decoder::decode(&derived, None).unwrap();
         assert!(decoded.bootstrap.flags & cbc_core::bootstrap::FLAG_COMPRESSED != 0);
 
         receipt::verify_receipt(&receipt, cbc_core::HashSuite::Blake3).unwrap();
@@ -380,7 +386,7 @@ mod tests {
 
         let (derived, receipts) = concatenate(&[&a1, &a2], &key).unwrap();
 
-        let decoded = decoder::decode(&derived).unwrap();
+        let decoded = decoder::decode(&derived, None).unwrap();
         assert_eq!(decoded.payload.len(), 1024);
         assert_eq!(&decoded.payload[..512], &vec![0x41u8; 512]);
         assert_eq!(&decoded.payload[512..], &vec![0x42u8; 512]);
@@ -399,7 +405,7 @@ mod tests {
 
         let (derived, receipt) = subrange_extract(&artifact, 1, 2, &key).unwrap();
 
-        let decoded = decoder::decode(&derived).unwrap();
+        let decoded = decoder::decode(&derived, None).unwrap();
         assert_eq!(decoded.block_count, 2);
         assert_eq!(decoded.payload.len(), 1024);
 

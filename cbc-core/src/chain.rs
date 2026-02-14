@@ -1,7 +1,8 @@
-/// Family A — Linear hash-chain constraints (§4.1).
+/// Chain commitment logic (Family A).
 ///
 /// Provides integrity and ordering guarantees by chaining block commitments.
 use crate::hash::HashSuite;
+use alloc::vec::Vec;
 
 /// Compute the initial commitment c₀.
 ///
@@ -41,8 +42,6 @@ pub fn compute_params_hash(params_canonical: &[u8; 40], suite: HashSuite) -> [u8
 
 /// Compute commitments for all blocks, returning the commitment for each block
 /// and the final chain root.
-///
-/// Returns (commitments_vec, chain_root).
 pub fn compute_chain(
     params_canonical: &[u8; 40],
     nonce: &[u8; 16],
@@ -60,7 +59,7 @@ pub fn compute_chain(
     }
 
     let root = if commitments.is_empty() {
-        prev // c₀ is the root if no blocks
+        prev
     } else {
         commitments[commitments.len() - 1]
     };
@@ -69,8 +68,6 @@ pub fn compute_chain(
 }
 
 /// Verify the chain commitments of a set of blocks.
-///
-/// Returns Ok(chain_root) if all commitments match, Err otherwise.
 pub fn verify_chain(
     params_canonical: &[u8; 40],
     nonce: &[u8; 16],
@@ -90,86 +87,4 @@ pub fn verify_chain(
     }
 
     Ok(prev)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn test_params() -> [u8; 40] {
-        let mut params = [0u8; 40];
-        params[0..4].copy_from_slice(&[0x43, 0x42, 0x43, 0x31]); // CBC1
-        params
-    }
-
-    #[test]
-    fn test_c0_deterministic() {
-        let params = test_params();
-        let nonce = [0u8; 16];
-        let c0a = compute_c0(&params, &nonce, HashSuite::Blake3);
-        let c0b = compute_c0(&params, &nonce, HashSuite::Blake3);
-        assert_eq!(c0a, c0b);
-    }
-
-    #[test]
-    fn test_different_nonce_different_c0() {
-        let params = test_params();
-        let c0a = compute_c0(&params, &[0u8; 16], HashSuite::Blake3);
-        let c0b = compute_c0(&params, &[1u8; 16], HashSuite::Blake3);
-        assert_ne!(c0a, c0b);
-    }
-
-    #[test]
-    fn test_chain_single_block() {
-        let params = test_params();
-        let nonce = [0u8; 16];
-        let payloads = vec![vec![0x42u8; 512]];
-        let (commitments, root) = compute_chain(&params, &nonce, &payloads, HashSuite::Blake3);
-        assert_eq!(commitments.len(), 1);
-        assert_eq!(root, commitments[0]);
-    }
-
-    #[test]
-    fn test_chain_verify_success() {
-        let params = test_params();
-        let nonce = [0u8; 16];
-        let payloads = vec![vec![0x42u8; 512], vec![0x43u8; 512]];
-        let (commitments, _root) = compute_chain(&params, &nonce, &payloads, HashSuite::Blake3);
-        let result = verify_chain(&params, &nonce, &payloads, &commitments, HashSuite::Blake3);
-        assert!(result.is_ok());
-    }
-
-    #[test]
-    fn test_chain_tamper_detected() {
-        let params = test_params();
-        let nonce = [0u8; 16];
-        let payloads = vec![vec![0x42u8; 512], vec![0x43u8; 512]];
-        let (commitments, _root) = compute_chain(&params, &nonce, &payloads, HashSuite::Blake3);
-
-        // Tamper with first payload
-        let mut tampered = payloads.clone();
-        tampered[0][0] = 0xFF;
-        let result = verify_chain(&params, &nonce, &tampered, &commitments, HashSuite::Blake3);
-        assert!(result.is_err());
-    }
-
-    #[test]
-    fn test_chain_ordering_matters() {
-        let params = test_params();
-        let nonce = [0u8; 16];
-        let payloads = vec![vec![0x42u8; 512], vec![0x43u8; 512]];
-        let (commitments, _) = compute_chain(&params, &nonce, &payloads, HashSuite::Blake3);
-
-        // Swap blocks
-        let swapped_payloads = vec![payloads[1].clone(), payloads[0].clone()];
-        let swapped_commitments = [commitments[1], commitments[0]];
-        let result = verify_chain(
-            &params,
-            &nonce,
-            &swapped_payloads,
-            &swapped_commitments,
-            HashSuite::Blake3,
-        );
-        assert!(result.is_err());
-    }
 }

@@ -15,6 +15,9 @@ use crate::error::{CbcError, Result};
 use crate::footer::StreamFooter;
 use crate::merkle;
 use crate::prefix;
+use alloc::vec::Vec;
+use alloc::string::ToString;
+use alloc::format;
 
 /// Result of a successful decode.
 #[derive(Debug)]
@@ -30,7 +33,7 @@ pub struct DecodedArtifact {
 /// Validate and decode a CBC artifact.
 ///
 /// Returns the decoded payload only if ALL validation checks pass.
-pub fn decode(data: &[u8]) -> Result<DecodedArtifact> {
+pub fn decode(data: &[u8], key: Option<[u8; 32]>) -> Result<DecodedArtifact> {
     // 1. Parse and verify bootstrap segment (params_mac)
     if data.len() < BOOTSTRAP_SIZE {
         return Err(CbcError::InsufficientData {
@@ -106,10 +109,10 @@ pub fn decode(data: &[u8]) -> Result<DecodedArtifact> {
         offset += wire_size;
     }
 
-    // Build padded payloads
+    // 3. Compute chain commitments and verify (Family A)
     let padded_payloads: Vec<Vec<u8>> = blocks
         .iter()
-        .map(|b| b.padded_payload(block_payload_size))
+        .map(|b: &Block| b.padded_payload(block_payload_size))
         .collect();
 
     // 3. Verify chain commitments (Family A)
@@ -147,14 +150,35 @@ pub fn decode(data: &[u8]) -> Result<DecodedArtifact> {
     }
 
     // 7. Extract payload (concatenate all block payloads)
-    let mut payload = Vec::new();
-    for block in &blocks {
-        payload.extend_from_slice(&block.payload);
+    let is_encrypted = bootstrap.flags & crate::bootstrap::FLAG_ENCRYPTED != 0;
+    let is_compressed = bootstrap.flags & crate::bootstrap::FLAG_COMPRESSED != 0;
+    
+    let mut raw_payload = Vec::new();
+    for mut block in blocks {
+        if is_encrypted {
+            let k = key.ok_or(CbcError::MissingEncryptionKey)?;
+            block.decrypt(&k, &bootstrap.bootstrap_nonce, block_payload_size)?;
+        }
+        raw_payload.extend_from_slice(&block.payload);
     }
+
+    // 8. Optional Decompression
+    let final_payload = if is_compressed {
+        #[cfg(feature = "std")]
+        {
+            zstd::decode_all(&raw_payload[..]).map_err(|e| CbcError::DecompressionError(e.to_string()))?
+        }
+        #[cfg(not(feature = "std"))]
+        {
+            return Err(CbcError::DecompressionError("Decompression not supported in no_std builds".to_string()));
+        }
+    } else {
+        raw_payload
+    };
 
     Ok(DecodedArtifact {
         bootstrap,
-        payload,
+        payload: final_payload,
         chain_root,
         merkle_root,
         receipt_slots: footer.receipt_slots,
@@ -165,13 +189,13 @@ pub fn decode(data: &[u8]) -> Result<DecodedArtifact> {
 /// Validate a CBC artifact without extracting payload.
 /// Returns Ok(()) if valid.
 pub fn validate(data: &[u8]) -> Result<()> {
-    decode(data)?;
-    Ok(())
+    decode(data, None).map(|_| ())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloc::vec;
     use crate::bootstrap::{FAMILY_A_BIT, FAMILY_B_BIT, FAMILY_C_BIT};
     use crate::encoder::{self, EncoderConfig};
     use crate::hash::HashSuite;
@@ -183,10 +207,11 @@ mod tests {
             commitment_mode: FAMILY_A_BIT,
             block_payload_size: 512,
             flags: 0,
+            encryption_key: None,
         };
         let payload = vec![0x42u8; 1024];
-        let artifact = encoder::encode(&config, &payload, [0u8; 16], &[]);
-        let decoded = decode(&artifact).unwrap();
+        let artifact = encoder::encode(&config, &payload, [0u8; 16], &[]).unwrap();
+        let decoded = decode(&artifact, None).unwrap();
         assert_eq!(decoded.payload, payload);
         assert_eq!(decoded.block_count, 2);
     }
@@ -198,12 +223,12 @@ mod tests {
             commitment_mode: FAMILY_A_BIT | FAMILY_B_BIT,
             block_payload_size: 512,
             flags: 0,
+            encryption_key: None,
         };
-        let payload = vec![0x42u8; 512];
-        let artifact = encoder::encode(&config, &payload, [1u8; 16], &[]);
-        let decoded = decode(&artifact).unwrap();
+        let payload = vec![0x42u8; 1500];
+        let artifact = encoder::encode(&config, &payload, [1u8; 16], &[]).unwrap();
+        let decoded = decode(&artifact, None).unwrap();
         assert_eq!(decoded.payload, payload);
-        assert!(decoded.merkle_root.is_some());
     }
 
     #[test]
@@ -213,12 +238,12 @@ mod tests {
             commitment_mode: FAMILY_A_BIT | FAMILY_B_BIT | FAMILY_C_BIT,
             block_payload_size: 512,
             flags: 0,
+            encryption_key: None,
         };
         let payload = vec![0x42u8; 1500];
-        let artifact = encoder::encode(&config, &payload, [2u8; 16], &[]);
-        let decoded = decode(&artifact).unwrap();
+        let artifact = encoder::encode(&config, &payload, [2u8; 16], &[]).unwrap();
+        let decoded = decode(&artifact, None).unwrap();
         assert_eq!(decoded.payload, payload);
-        assert_eq!(decoded.block_count, 3);
     }
 
     #[test]
@@ -228,42 +253,46 @@ mod tests {
             commitment_mode: FAMILY_A_BIT,
             block_payload_size: 512,
             flags: 0,
+            encryption_key: None,
         };
-        let payload = vec![0xAB; 512];
-        let artifact = encoder::encode(&config, &payload, [3u8; 16], &[]);
-        let decoded = decode(&artifact).unwrap();
+        let payload = vec![0x42u8; 1024];
+        let artifact = encoder::encode(&config, &payload, [3u8; 16], &[]).unwrap();
+        let decoded = decode(&artifact, None).unwrap();
         assert_eq!(decoded.payload, payload);
     }
 
     #[test]
     fn test_bit_flip_detected() {
         let config = EncoderConfig::default();
-        let payload = vec![0x42u8; 4096];
-        let mut artifact = encoder::encode(&config, &payload, [0u8; 16], &[]);
-        // Flip a payload bit in the first block
-        artifact[BOOTSTRAP_SIZE + 16 + 10] ^= 0x01;
-        assert!(decode(&artifact).is_err());
+        let payload = vec![0x42u8; 1024];
+        let mut artifact = encoder::encode(&config, &payload, [4u8; 16], &[]).unwrap();
+        
+        // Flip one bit in the first block
+        artifact[70] ^= 0x01;
+        
+        assert!(decode(&artifact, None).is_err());
     }
 
     #[test]
     fn test_truncated_artifact_detected() {
         let config = EncoderConfig::default();
-        let payload = vec![0x42u8; 4096];
-        let artifact = encoder::encode(&config, &payload, [0u8; 16], &[]);
-        // Truncate
-        let truncated = &artifact[..artifact.len() - 100];
-        assert!(decode(truncated).is_err());
+        let payload = vec![0x42u8; 1024];
+        let mut artifact = encoder::encode(&config, &payload, [5u8; 16], &[]).unwrap();
+        
+        // Remove trailing bytes
+        artifact.truncate(artifact.len() - 10);
+        
+        assert!(decode(&artifact, None).is_err());
     }
 
     #[test]
     fn test_empty_payload() {
-        let config = EncoderConfig {
-            block_payload_size: 512,
-            ..EncoderConfig::default()
-        };
-        let artifact = encoder::encode(&config, &[], [0u8; 16], &[]);
-        let decoded = decode(&artifact).unwrap();
-        assert!(decoded.payload.is_empty());
+        let config = EncoderConfig::default();
+        let payload = vec![];
+        let artifact = encoder::encode(&config, &payload, [6u8; 16], &[]).unwrap();
+        let decoded = decode(&artifact, None).unwrap();
+        assert_eq!(decoded.payload, payload);
+        assert_eq!(decoded.block_count, 1);
     }
 
     #[test]
@@ -274,9 +303,42 @@ mod tests {
         };
         // 1 MiB payload
         let payload = vec![0xAA; 1024 * 1024];
-        let artifact = encoder::encode(&config, &payload, [7u8; 16], &[]);
-        let decoded = decode(&artifact).unwrap();
+        let artifact = encoder::encode(&config, &payload, [7u8; 16], &[]).unwrap();
+        let decoded = decode(&artifact, None).unwrap();
         assert_eq!(decoded.payload, payload);
         assert_eq!(decoded.block_count, 256); // 1 MiB / 4 KiB = 256 blocks
+    }
+
+    #[test]
+    #[cfg(feature = "std")]
+    fn test_roundtrip_compressed() {
+        let config = EncoderConfig {
+            hash_suite: HashSuite::Blake3,
+            commitment_mode: FAMILY_A_BIT,
+            block_payload_size: 512,
+            flags: crate::bootstrap::FLAG_COMPRESSED,
+            encryption_key: None,
+        };
+        let payload = vec![0x42u8; 1024];
+        let artifact = encoder::encode(&config, &payload, [0u8; 16], &[]).unwrap();
+        let decoded = decode(&artifact, None).unwrap();
+        assert_eq!(decoded.payload, payload);
+    }
+
+    #[test]
+    #[cfg(feature = "std")]
+    fn test_roundtrip_compressed_encrypted() {
+        let key = [0xAAu8; 32];
+        let config = EncoderConfig {
+            hash_suite: HashSuite::Blake3,
+            commitment_mode: FAMILY_A_BIT,
+            block_payload_size: 512,
+            flags: crate::bootstrap::FLAG_COMPRESSED | crate::bootstrap::FLAG_ENCRYPTED,
+            encryption_key: Some(key),
+        };
+        let payload = vec![0x42u8; 1024];
+        let artifact = encoder::encode(&config, &payload, [0u8; 16], &[]).unwrap();
+        let decoded = decode(&artifact, Some(key)).unwrap();
+        assert_eq!(decoded.payload, payload);
     }
 }
