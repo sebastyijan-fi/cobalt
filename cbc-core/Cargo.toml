@@ -1,0 +1,15 @@
+[package]
+name = "cbc-core"
+version.workspace = true
+edition.workspace = true
+description = "Core library for CBC (Context-Bound Container) v0.1 — binary container format with intrinsic integrity"
+
+[dependencies]
+blake3 = "1"
+sha2 = "0.10"
+crc32c = "0.6"
+thiserror = "2"
+rand = "0.8"
+
+[dev-dependencies]
+hex = "0.4"

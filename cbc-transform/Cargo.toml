@@ -1,0 +1,18 @@
+[package]
+name = "cbc-transform"
+version.workspace = true
+edition.workspace = true
+description = "Transform operations and receipts for CBC (Context-Bound Container) v0.1"
+
+[dependencies]
+cbc-core = { path = "../cbc-core" }
+p256 = { version = "0.13", features = ["ecdsa"] }
+ed25519-dalek = { version = "2", features = ["rand_core"] }
+rand = "0.8"
+thiserror = "2"
+sha2 = "0.10"
+ecdsa = { version = "0.16", features = ["signing", "verifying"] }
+signature = "2"
+
+[dev-dependencies]
+hex = "0.4"

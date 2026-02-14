@@ -1,0 +1,18 @@
+[package]
+name = "cbc-cli"
+version.workspace = true
+edition.workspace = true
+description = "CLI tool for CBC (Context-Bound Container) v0.1 — encode, decode, validate, transform"
+
+[[bin]]
+name = "cbc"
+path = "src/main.rs"
+
+[dependencies]
+cbc-core = { path = "../cbc-core" }
+cbc-transform = { path = "../cbc-transform" }
+clap = { version = "4", features = ["derive"] }
+hex = "0.4"
+rand = "0.8"
+p256 = { version = "0.13", features = ["ecdsa"] }
+ed25519-dalek = { version = "2", features = ["rand_core"] }
