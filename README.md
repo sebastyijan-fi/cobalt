@@ -2,7 +2,7 @@
 
 A binary container format in which validity and meaning depend on intrinsic relational constraints among blocks. A CBC artifact is **self-validating**, **tamper-evident**, and **provenance-aware** without reliance on external sidecar files, detached signatures, or out-of-band metadata.
 
-**Version:** 0.1.0 — **Status:** Draft
+**Version:** 0.1.0 — **Status:** Draft — **License:** MIT
 
 ---
 
@@ -22,7 +22,7 @@ A binary container format in which validity and meaning depend on intrinsic rela
 # Build
 cargo build --workspace
 
-# Run all tests (78 tests)
+# Run all tests (92 tests)
 cargo test --workspace
 
 # Encode a file
@@ -36,6 +36,15 @@ cargo run -p cbc-cli -- inspect -i myfile.cbc
 
 # Decode (extract payload)
 cargo run -p cbc-cli -- decode -i myfile.cbc -o recovered.pdf
+
+# Streaming encode (constant memory)
+cargo run -p cbc-cli -- stream-encode -i largefile.bin -o largefile.cbc --families A+B
+
+# Generate a Merkle range proof
+cargo run -p cbc-cli -- prove -i myfile.cbc --start 0 --end 3 -o proof.bin
+
+# Verify a range proof
+cargo run -p cbc-cli -- verify-proof -i myfile.cbc -p proof.bin
 
 # Transform with receipt (requires signing key)
 cargo run -p cbc-cli -- keygen -o mykey --alg ed25519
@@ -54,20 +63,22 @@ cobalt/
 │   ├── prefix.rs      Family C — prefix parse constraints (§4.3)
 │   ├── footer.rs      Stream Footer with footer_commitment (§5.4)
 │   ├── encoder.rs     Payload → CBC artifact
-│   └── decoder.rs     Full validator/decoder (hard-error model, §10)
+│   ├── decoder.rs     Full validator/decoder (hard-error model, §10)
+│   └── streaming.rs   Streaming encoder/decoder (block_count=0 mode)
 ├── cbc-transform/     Transform & receipt library
 │   ├── transforms.rs  Truncate, rechunk, recompress, concat, subrange
 │   └── receipt.rs     ECDSA P-256 + Ed25519 signing/verification (§6)
 └── cbc-cli/           Command-line interface
-    └── main.rs        encode, decode, validate, inspect, transform, keygen
+    └── main.rs        encode, decode, validate, inspect, transform, keygen,
+                       prove, verify-proof, stream-encode
 ```
 
 ## API Usage
 
-### Encode
+### Encode & Decode
 
 ```rust
-use cbc_core::{EncoderConfig, HashSuite, encoder};
+use cbc_core::{EncoderConfig, HashSuite, encoder, decoder};
 use cbc_core::bootstrap::FAMILY_A_BIT;
 
 let config = EncoderConfig {
@@ -80,17 +91,47 @@ let config = EncoderConfig {
 let payload = std::fs::read("myfile.pdf").unwrap();
 let artifact = encoder::encode_random_nonce(&config, &payload, &[]);
 std::fs::write("myfile.cbc", &artifact).unwrap();
+
+// Decode
+let decoded = decoder::decode(&artifact).unwrap();
+assert_eq!(decoded.payload, payload);
 ```
 
-### Decode & Validate
+### Streaming Encode
 
 ```rust
-use cbc_core::decoder;
+use cbc_core::{EncoderConfig, HashSuite, streaming::StreamingEncoder};
+use cbc_core::bootstrap::FAMILY_A_BIT;
 
-let data = std::fs::read("myfile.cbc").unwrap();
-let decoded = decoder::decode(&data).unwrap(); // hard error if invalid
-println!("Payload: {} bytes", decoded.payload.len());
-println!("Root: {}", hex::encode(decoded.chain_root));
+let config = EncoderConfig {
+    hash_suite: HashSuite::Blake3,
+    commitment_mode: FAMILY_A_BIT,
+    block_payload_size: 4096,
+    flags: 0,
+};
+
+let mut enc = StreamingEncoder::new(&config, [0u8; 16]);
+enc.write_block(b"first chunk of data...");
+enc.write_block(b"second chunk...");
+let artifact = enc.finalize(&[]);
+```
+
+### Range Proofs (Selective Disclosure)
+
+```rust
+use cbc_core::merkle::{MerkleTree, RangeProof};
+
+// Build tree and prove a range
+let tree = MerkleTree::build(&params_hash, &padded_payloads, suite);
+let proof = tree.prove_range(2, 5).unwrap();
+
+// Verify proof against known root
+let leaf_hashes = /* compute leaf hashes for blocks 2..=5 */;
+assert!(proof.verify(&leaf_hashes, &tree.root, suite));
+
+// Serialize for transport
+let bytes = proof.encode();
+let decoded_proof = RangeProof::decode(&bytes).unwrap();
 ```
 
 ### Transform with Receipt
@@ -118,4 +159,4 @@ With default 4096-byte blocks: **48 bytes/block = 1.17% overhead**.
 
 ## License
 
-See LICENSE file.
+MIT — see [LICENSE](LICENSE).

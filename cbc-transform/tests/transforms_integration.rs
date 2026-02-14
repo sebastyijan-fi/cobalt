@@ -1,12 +1,11 @@
-/// Integration tests for CBC transforms — §12.3 positive tests (T1–T5).
-///
-/// Each test validates:
-/// 1. Source artifact is valid
-/// 2. Transform produces a new valid artifact
-/// 3. Derived artifact has a different root
-/// 4. Derived payload matches expected content
-/// 5. Receipt is valid and links source → derived
-
+//! Integration tests for CBC transforms — §12.3 positive tests (T1–T5).
+//!
+//! Each test validates:
+//! 1. Source artifact is valid
+//! 2. Transform produces a new valid artifact
+//! 3. Derived artifact has a different root
+//! 4. Derived payload matches expected content
+//! 5. Receipt is valid and links source → derived
 use cbc_core::bootstrap::*;
 use cbc_core::decoder;
 use cbc_core::encoder::{self, EncoderConfig};
@@ -20,7 +19,9 @@ fn make_source(payload_size: usize) -> (Vec<u8>, Vec<u8>) {
         block_payload_size: 512,
         flags: 0,
     };
-    let payload = (0..payload_size).map(|i| (i % 256) as u8).collect::<Vec<_>>();
+    let payload = (0..payload_size)
+        .map(|i| (i % 256) as u8)
+        .collect::<Vec<_>>();
     let artifact = encoder::encode(&config, &payload, [42u8; 16], &[]);
     (artifact, payload)
 }
@@ -44,8 +45,10 @@ fn test_t1_truncation() {
     assert_eq!(derived_decoded.block_count, 2);
 
     // Different root
-    assert_ne!(source_decoded.chain_root, derived_decoded.chain_root,
-        "T1: derived must have different root");
+    assert_ne!(
+        source_decoded.chain_root, derived_decoded.chain_root,
+        "T1: derived must have different root"
+    );
 
     // Payload is the first 1024 bytes
     assert_eq!(derived_decoded.payload.len(), 1024);
@@ -108,9 +111,7 @@ fn test_t4_concatenation() {
     let (source_b, payload_b) = make_source(1024);
 
     let key = signing_key();
-    let (derived, receipts) = cbc_transform::concatenate(
-        &[&source_a, &source_b], &key
-    ).unwrap();
+    let (derived, receipts) = cbc_transform::concatenate(&[&source_a, &source_b], &key).unwrap();
 
     let derived_decoded = decoder::decode(&derived).unwrap();
 
@@ -166,13 +167,11 @@ fn test_receipt_chain_provenance() {
     let key = signing_key();
 
     // A → B: subrange extract blocks 0..2
-    let (artifact_b, receipt_ab) =
-        cbc_transform::subrange_extract(&source_a, 0, 2, &key).unwrap();
+    let (artifact_b, receipt_ab) = cbc_transform::subrange_extract(&source_a, 0, 2, &key).unwrap();
     let b_decoded = decoder::decode(&artifact_b).unwrap();
 
     // B → C: rechunk to 1024-byte blocks
-    let (artifact_c, receipt_bc) =
-        cbc_transform::rechunk(&artifact_b, 1024, &key).unwrap();
+    let (artifact_c, receipt_bc) = cbc_transform::rechunk(&artifact_b, 1024, &key).unwrap();
     let c_decoded = decoder::decode(&artifact_c).unwrap();
 
     // Verify lineage: C → B → A
@@ -186,6 +185,8 @@ fn test_receipt_chain_provenance() {
     receipt::verify_receipt(&receipt_bc, HashSuite::Blake3).unwrap();
 
     // Follow chain: receipt_bc.source_root == receipt_ab.derived_root
-    assert_eq!(receipt_bc.source_root, receipt_ab.derived_root,
-        "Receipt chain must link B → A through source/derived roots");
+    assert_eq!(
+        receipt_bc.source_root, receipt_ab.derived_root,
+        "Receipt chain must link B → A through source/derived roots"
+    );
 }

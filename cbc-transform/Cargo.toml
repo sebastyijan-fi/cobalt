@@ -2,6 +2,10 @@
 name = "cbc-transform"
 version.workspace = true
 edition.workspace = true
+license.workspace = true
+repository.workspace = true
+keywords.workspace = true
+categories.workspace = true
 description = "Transform operations and receipts for CBC (Context-Bound Container) v0.1"
 
 [dependencies]

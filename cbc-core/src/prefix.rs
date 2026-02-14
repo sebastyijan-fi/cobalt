@@ -3,7 +3,6 @@
 /// Structural parseability without cryptography.
 /// Provides block boundary resynchronization and ambiguity rejection
 /// using self-delimiting prefix-free codes.
-
 use crate::error::{CbcError, Result};
 
 /// Prefix code marker for block boundaries.
@@ -14,7 +13,7 @@ use crate::error::{CbcError, Result};
 ///
 /// This is a "lite" Family C that provides the resync and ambiguity properties
 /// the spec requires without overcomplicating the v0.1 prototype.
-
+///
 /// Block start marker bytes.
 pub const BLOCK_START_MARKER: [u8; 2] = [0xFF, 0x00];
 
@@ -60,20 +59,15 @@ pub fn decode_prefix_marker(data: &[u8]) -> Result<(u8, u32, usize)> {
 ///
 /// Checks that all prefix markers are unambiguous and self-consistent.
 /// `block_data` contains the raw bytes for each block (including prefix markers).
-pub fn validate_prefix_parse(
-    block_data: &[&[u8]],
-    expected_payload_size: u32,
-) -> Result<()> {
+pub fn validate_prefix_parse(block_data: &[&[u8]], expected_payload_size: u32) -> Result<()> {
     for (i, data) in block_data.iter().enumerate() {
         let (block_type, payload_size, _consumed) = decode_prefix_marker(data)
-            .map_err(|e| CbcError::PrefixParseError(
-                format!("block {i}: {e}")
-            ))?;
+            .map_err(|e| CbcError::PrefixParseError(format!("block {i}: {e}")))?;
 
         if block_type != BLOCK_TYPE_DATA {
-            return Err(CbcError::PrefixParseError(
-                format!("block {i}: unknown block type 0x{block_type:02x}")
-            ));
+            return Err(CbcError::PrefixParseError(format!(
+                "block {i}: unknown block type 0x{block_type:02x}"
+            )));
         }
 
         if payload_size != expected_payload_size {
@@ -123,9 +117,7 @@ fn decode_varint(data: &[u8]) -> Result<(u32, usize)> {
 
     for (i, &byte) in data.iter().enumerate() {
         if shift >= 35 {
-            return Err(CbcError::PrefixParseError(
-                "varint too large".to_string(),
-            ));
+            return Err(CbcError::PrefixParseError("varint too large".to_string()));
         }
         value |= ((byte & 0x7F) as u32) << shift;
         shift += 7;
@@ -197,7 +189,7 @@ mod tests {
         let markers: Vec<Vec<u8>> = (0..3)
             .map(|_| {
                 let mut m = encode_prefix_marker(BLOCK_TYPE_DATA, 512);
-                m.extend_from_slice(&vec![0u8; 100]); // extra data
+                m.extend_from_slice(&[0u8; 100]); // extra data
                 m
             })
             .collect();

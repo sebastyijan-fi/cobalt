@@ -1,13 +1,16 @@
-/// CBC CLI — command-line tool for encoding, decoding, validating, inspecting, and
-/// transforming CBC artifacts.
-
+//! CBC CLI — command-line tool for encoding, decoding, validating, inspecting, and
+//! transforming CBC artifacts.
 use clap::{Parser, Subcommand};
 use std::fs;
 use std::path::PathBuf;
 use std::process;
 
 #[derive(Parser)]
-#[command(name = "cbc", version = "0.1.0", about = "CBC (Context-Bound Container) v0.1 CLI")]
+#[command(
+    name = "cbc",
+    version = "0.1.0",
+    about = "CBC (Context-Bound Container) v0.1 CLI"
+)]
 struct Cli {
     #[command(subcommand)]
     command: Commands,
@@ -95,6 +98,51 @@ enum Commands {
         #[arg(long, default_value = "ed25519")]
         alg: String,
     },
+
+    /// Generate a Merkle range proof for a block range
+    Prove {
+        /// Input CBC artifact file (must have Family B enabled)
+        #[arg(short, long)]
+        input: PathBuf,
+        /// Start block index (inclusive)
+        #[arg(long)]
+        start: u32,
+        /// End block index (inclusive)
+        #[arg(long)]
+        end: u32,
+        /// Output proof file
+        #[arg(short, long)]
+        output: PathBuf,
+    },
+
+    /// Verify a Merkle range proof against a CBC artifact
+    VerifyProof {
+        /// Input CBC artifact file
+        #[arg(short, long)]
+        input: PathBuf,
+        /// Proof file to verify
+        #[arg(short, long)]
+        proof: PathBuf,
+    },
+
+    /// Streaming encode — read from a file with constant memory usage
+    StreamEncode {
+        /// Input file
+        #[arg(short, long)]
+        input: PathBuf,
+        /// Output CBC artifact file
+        #[arg(short, long)]
+        output: PathBuf,
+        /// Hash suite (blake3 or sha256)
+        #[arg(long, default_value = "blake3")]
+        hash: String,
+        /// Block payload size in bytes
+        #[arg(long, default_value = "4096")]
+        block_size: u32,
+        /// Comma-separated constraint families (A, A+B, A+B+C)
+        #[arg(long, default_value = "A")]
+        families: String,
+    },
 }
 
 fn parse_families(s: &str) -> u8 {
@@ -154,9 +202,35 @@ fn main() {
             new_block_size,
             start,
             end,
-        } => cmd_transform(transform_type, input, output, key, keep, new_block_size, start, end),
+        } => cmd_transform(
+            transform_type,
+            input,
+            output,
+            key,
+            keep,
+            new_block_size,
+            start,
+            end,
+        ),
 
         Commands::Keygen { output, alg } => cmd_keygen(output, alg),
+
+        Commands::Prove {
+            input,
+            start,
+            end,
+            output,
+        } => cmd_prove(input, start, end, output),
+
+        Commands::VerifyProof { input, proof } => cmd_verify_proof(input, proof),
+
+        Commands::StreamEncode {
+            input,
+            output,
+            hash,
+            block_size,
+            families,
+        } => cmd_stream_encode(input, output, hash, block_size, families),
     }
 }
 
@@ -180,9 +254,14 @@ fn cmd_encode(input: PathBuf, output: PathBuf, hash: String, block_size: u32, fa
         process::exit(1);
     });
 
-    let block_count = (payload.len() + block_size as usize - 1) / block_size as usize;
-    println!("✓ Encoded {} bytes → {} ({} blocks, {} bytes)",
-        payload.len(), output.display(), block_count.max(1), artifact.len());
+    let block_count = payload.len().div_ceil(block_size as usize);
+    println!(
+        "✓ Encoded {} bytes → {} ({} blocks, {} bytes)",
+        payload.len(),
+        output.display(),
+        block_count.max(1),
+        artifact.len()
+    );
 }
 
 fn cmd_decode(input: PathBuf, output: PathBuf) {
@@ -201,8 +280,12 @@ fn cmd_decode(input: PathBuf, output: PathBuf) {
         process::exit(1);
     });
 
-    println!("✓ Decoded {} blocks → {} bytes → {}",
-        decoded.block_count, decoded.payload.len(), output.display());
+    println!(
+        "✓ Decoded {} blocks → {} bytes → {}",
+        decoded.block_count,
+        decoded.payload.len(),
+        output.display()
+    );
 }
 
 fn cmd_validate(input: PathBuf) {
@@ -231,7 +314,10 @@ fn cmd_inspect(input: PathBuf) {
 
     // Parse bootstrap (always safe even if artifact is invalid)
     if data.len() < 64 {
-        eprintln!("File too small for CBC bootstrap segment ({} bytes)", data.len());
+        eprintln!(
+            "File too small for CBC bootstrap segment ({} bytes)",
+            data.len()
+        );
         process::exit(1);
     }
 
@@ -243,7 +329,8 @@ fn cmd_inspect(input: PathBuf) {
             println!("=== CBC Artifact Inspection ===");
             println!("File size:         {} bytes", data.len());
             println!("Hash suite:        {:?}", bs.hash_suite);
-            println!("Commitment mode:   0x{:02x} (A:{} B:{} C:{})",
+            println!(
+                "Commitment mode:   0x{:02x} (A:{} B:{} C:{})",
                 bs.commitment_mode,
                 if bs.family_a() { "✓" } else { "✗" },
                 if bs.family_b() { "✓" } else { "✗" },
@@ -252,7 +339,8 @@ fn cmd_inspect(input: PathBuf) {
             println!("Block payload:     {} bytes", bs.block_payload_size);
             println!("Block count:       {}", bs.block_count);
             println!("Nonce:             {}", hex::encode(bs.bootstrap_nonce));
-            println!("Flags:             0x{:08x} (compressed:{} encrypted:{})",
+            println!(
+                "Flags:             0x{:08x} (compressed:{} encrypted:{})",
                 bs.flags,
                 if bs.flags & 0x01 != 0 { "yes" } else { "no" },
                 if bs.flags & 0x02 != 0 { "yes" } else { "no" },
@@ -272,7 +360,10 @@ fn cmd_inspect(input: PathBuf) {
                             Ok(receipt) => {
                                 println!("  Receipt #{i}:");
                                 println!("    Source root:   {}", hex::encode(receipt.source_root));
-                                println!("    Derived root:  {}", hex::encode(receipt.derived_root));
+                                println!(
+                                    "    Derived root:  {}",
+                                    hex::encode(receipt.derived_root)
+                                );
                                 println!("    Transform:     {:?}", receipt.transform_type);
                                 println!("    Timestamp:     {}", receipt.timestamp);
                                 println!("    Sig algorithm: {:?}", receipt.sig_alg);
@@ -322,14 +413,17 @@ fn cmd_transform(
                 eprintln!("Error reading input: {e}");
                 process::exit(1);
             });
-            let (artifact, _receipt) =
-                cbc_transform::truncate(&data, keep_blocks, &signing_key)
-                    .unwrap_or_else(|e| {
-                        eprintln!("Transform failed: {e}");
-                        process::exit(1);
-                    });
+            let (artifact, _receipt) = cbc_transform::truncate(&data, keep_blocks, &signing_key)
+                .unwrap_or_else(|e| {
+                    eprintln!("Transform failed: {e}");
+                    process::exit(1);
+                });
             fs::write(&output, &artifact).unwrap();
-            println!("✓ Truncated → {} ({} bytes)", output.display(), artifact.len());
+            println!(
+                "✓ Truncated → {} ({} bytes)",
+                output.display(),
+                artifact.len()
+            );
         }
         "rechunk" => {
             let new_bs = new_block_size.unwrap_or_else(|| {
@@ -340,28 +434,34 @@ fn cmd_transform(
                 eprintln!("Error reading input: {e}");
                 process::exit(1);
             });
-            let (artifact, _receipt) =
-                cbc_transform::rechunk(&data, new_bs, &signing_key)
-                    .unwrap_or_else(|e| {
-                        eprintln!("Transform failed: {e}");
-                        process::exit(1);
-                    });
+            let (artifact, _receipt) = cbc_transform::rechunk(&data, new_bs, &signing_key)
+                .unwrap_or_else(|e| {
+                    eprintln!("Transform failed: {e}");
+                    process::exit(1);
+                });
             fs::write(&output, &artifact).unwrap();
-            println!("✓ Rechunked → {} ({} bytes)", output.display(), artifact.len());
+            println!(
+                "✓ Rechunked → {} ({} bytes)",
+                output.display(),
+                artifact.len()
+            );
         }
         "recompress" => {
             let data = fs::read(input.trim()).unwrap_or_else(|e| {
                 eprintln!("Error reading input: {e}");
                 process::exit(1);
             });
-            let (artifact, _receipt) =
-                cbc_transform::recompress(&data, &signing_key)
-                    .unwrap_or_else(|e| {
-                        eprintln!("Transform failed: {e}");
-                        process::exit(1);
-                    });
+            let (artifact, _receipt) = cbc_transform::recompress(&data, &signing_key)
+                .unwrap_or_else(|e| {
+                    eprintln!("Transform failed: {e}");
+                    process::exit(1);
+                });
             fs::write(&output, &artifact).unwrap();
-            println!("✓ Recompressed → {} ({} bytes)", output.display(), artifact.len());
+            println!(
+                "✓ Recompressed → {} ({} bytes)",
+                output.display(),
+                artifact.len()
+            );
         }
         "concat" => {
             let input_files: Vec<&str> = input.split(',').map(|s| s.trim()).collect();
@@ -375,15 +475,18 @@ fn cmd_transform(
                 })
                 .collect();
             let refs: Vec<&[u8]> = data.iter().map(|d| d.as_slice()).collect();
-            let (artifact, _receipts) =
-                cbc_transform::concatenate(&refs, &signing_key)
-                    .unwrap_or_else(|e| {
-                        eprintln!("Transform failed: {e}");
-                        process::exit(1);
-                    });
+            let (artifact, _receipts) = cbc_transform::concatenate(&refs, &signing_key)
+                .unwrap_or_else(|e| {
+                    eprintln!("Transform failed: {e}");
+                    process::exit(1);
+                });
             fs::write(&output, &artifact).unwrap();
-            println!("✓ Concatenated {} sources → {} ({} bytes)",
-                input_files.len(), output.display(), artifact.len());
+            println!(
+                "✓ Concatenated {} sources → {} ({} bytes)",
+                input_files.len(),
+                output.display(),
+                artifact.len()
+            );
         }
         "subrange" => {
             let s = start.unwrap_or_else(|| {
@@ -398,15 +501,17 @@ fn cmd_transform(
                 eprintln!("Error reading input: {e}");
                 process::exit(1);
             });
-            let (artifact, _receipt) =
-                cbc_transform::subrange_extract(&data, s, e, &signing_key)
-                    .unwrap_or_else(|e| {
-                        eprintln!("Transform failed: {e}");
-                        process::exit(1);
-                    });
+            let (artifact, _receipt) = cbc_transform::subrange_extract(&data, s, e, &signing_key)
+                .unwrap_or_else(|e| {
+                    eprintln!("Transform failed: {e}");
+                    process::exit(1);
+                });
             fs::write(&output, &artifact).unwrap();
-            println!("✓ Extracted blocks [{s}..{e}] → {} ({} bytes)",
-                output.display(), artifact.len());
+            println!(
+                "✓ Extracted blocks [{s}..{e}] → {} ({} bytes)",
+                output.display(),
+                artifact.len()
+            );
         }
         other => {
             eprintln!("Unknown transform: {other}. Valid: truncate, rechunk, recompress, concat, subrange");
@@ -483,4 +588,201 @@ fn load_signing_key(key_bytes: &[u8]) -> cbc_transform::SigningKey {
             process::exit(1);
         }
     }
+}
+
+fn cmd_prove(input: PathBuf, start: u32, end: u32, output: PathBuf) {
+    let data = fs::read(&input).unwrap_or_else(|e| {
+        eprintln!("Error reading {}: {e}", input.display());
+        process::exit(1);
+    });
+
+    let decoded = cbc_core::decoder::decode(&data).unwrap_or_else(|e| {
+        eprintln!("✗ Validation failed: {e}");
+        process::exit(1);
+    });
+
+    if !decoded.bootstrap.family_b() {
+        eprintln!("✗ Artifact does not have Family B (Merkle tree) enabled");
+        process::exit(1);
+    }
+
+    if start > end || end as usize >= decoded.block_count as usize {
+        eprintln!(
+            "✗ Invalid range [{start}..{end}], artifact has {} blocks",
+            decoded.block_count
+        );
+        process::exit(1);
+    }
+
+    // Re-compute Merkle tree to generate proof
+    let bps = decoded.bootstrap.block_payload_size;
+    let params_canonical = decoded.bootstrap.params_canonical();
+    let params_hash =
+        cbc_core::chain::compute_params_hash(&params_canonical, decoded.bootstrap.hash_suite);
+    let padded_payloads = compute_padded_payloads(&decoded.payload, bps);
+    let tree = cbc_core::merkle::MerkleTree::build(
+        &params_hash,
+        &padded_payloads,
+        decoded.bootstrap.hash_suite,
+    );
+
+    let proof = tree
+        .prove_range(start as usize, end as usize)
+        .unwrap_or_else(|| {
+            eprintln!("✗ Failed to generate range proof");
+            process::exit(1);
+        });
+
+    let proof_bytes = proof.encode();
+    fs::write(&output, &proof_bytes).unwrap_or_else(|e| {
+        eprintln!("Error writing proof: {e}");
+        process::exit(1);
+    });
+
+    println!("✓ Generated Merkle range proof for blocks [{start}..={end}]");
+    println!("  Proof size:   {} bytes", proof_bytes.len());
+    println!("  Proof nodes:  {}", proof.proof_nodes.len());
+    println!("  Merkle root:  {}", hex::encode(tree.root));
+    println!("  Output:       {}", output.display());
+}
+
+fn cmd_verify_proof(input: PathBuf, proof_path: PathBuf) {
+    let data = fs::read(&input).unwrap_or_else(|e| {
+        eprintln!("Error reading {}: {e}", input.display());
+        process::exit(1);
+    });
+
+    let decoded = cbc_core::decoder::decode(&data).unwrap_or_else(|e| {
+        eprintln!("✗ Validation failed: {e}");
+        process::exit(1);
+    });
+
+    let merkle_root = decoded.merkle_root.unwrap_or_else(|| {
+        eprintln!("✗ Artifact has no Merkle root (Family B not enabled)");
+        process::exit(1);
+    });
+
+    let proof_bytes = fs::read(&proof_path).unwrap_or_else(|e| {
+        eprintln!("Error reading proof {}: {e}", proof_path.display());
+        process::exit(1);
+    });
+
+    let proof = cbc_core::merkle::RangeProof::decode(&proof_bytes).unwrap_or_else(|| {
+        eprintln!("✗ Failed to decode proof file");
+        process::exit(1);
+    });
+
+    // Compute leaf hashes for the proved range
+    let bps = decoded.bootstrap.block_payload_size;
+    let params_canonical = decoded.bootstrap.params_canonical();
+    let params_hash =
+        cbc_core::chain::compute_params_hash(&params_canonical, decoded.bootstrap.hash_suite);
+    let padded_payloads = compute_padded_payloads(&decoded.payload, bps);
+
+    let leaf_hashes: Vec<[u8; 32]> = (proof.start..=proof.end)
+        .map(|i| {
+            cbc_core::merkle::compute_leaf(
+                &params_hash,
+                i as u64,
+                &padded_payloads[i],
+                decoded.bootstrap.hash_suite,
+            )
+        })
+        .collect();
+
+    if proof.verify(&leaf_hashes, &merkle_root, decoded.bootstrap.hash_suite) {
+        println!(
+            "✓ Proof verified: blocks [{}..={}] belong to Merkle root {}",
+            proof.start,
+            proof.end,
+            hex::encode(merkle_root)
+        );
+    } else {
+        eprintln!("✗ Proof verification FAILED");
+        process::exit(1);
+    }
+}
+
+fn cmd_stream_encode(
+    input: PathBuf,
+    output: PathBuf,
+    hash: String,
+    block_size: u32,
+    families: String,
+) {
+    use std::io::Read;
+
+    let config = cbc_core::EncoderConfig {
+        hash_suite: parse_hash(&hash),
+        commitment_mode: parse_families(&families),
+        block_payload_size: block_size,
+        flags: 0,
+    };
+
+    let nonce = {
+        let mut n = [0u8; 16];
+        use rand::RngCore;
+        rand::thread_rng().fill_bytes(&mut n);
+        n
+    };
+
+    let mut enc = cbc_core::streaming::StreamingEncoder::new(&config, nonce);
+
+    let mut file = fs::File::open(&input).unwrap_or_else(|e| {
+        eprintln!("Error opening {}: {e}", input.display());
+        process::exit(1);
+    });
+
+    let bps = block_size as usize;
+    let mut buf = vec![0u8; bps];
+    let mut total_bytes = 0usize;
+
+    loop {
+        let n = file.read(&mut buf).unwrap_or_else(|e| {
+            eprintln!("Error reading {}: {e}", input.display());
+            process::exit(1);
+        });
+        if n == 0 {
+            break;
+        }
+        enc.write_block(&buf[..n]);
+        total_bytes += n;
+    }
+
+    // Handle empty file
+    if enc.block_count() == 0 {
+        enc.write_block(&[]);
+    }
+
+    let block_count = enc.block_count();
+    let artifact = enc.finalize(&[]);
+
+    fs::write(&output, &artifact).unwrap_or_else(|e| {
+        eprintln!("Error writing {}: {e}", output.display());
+        process::exit(1);
+    });
+
+    println!(
+        "✓ Stream-encoded {} bytes → {} ({} blocks, {} bytes)",
+        total_bytes,
+        output.display(),
+        block_count,
+        artifact.len()
+    );
+}
+
+/// Reconstruct padded payloads from a flat payload buffer.
+fn compute_padded_payloads(payload: &[u8], block_payload_size: u32) -> Vec<Vec<u8>> {
+    let bps = block_payload_size as usize;
+    if payload.is_empty() {
+        return vec![vec![0u8; bps]];
+    }
+    payload
+        .chunks(bps)
+        .map(|chunk| {
+            let mut padded = chunk.to_vec();
+            padded.resize(bps, 0);
+            padded
+        })
+        .collect()
 }

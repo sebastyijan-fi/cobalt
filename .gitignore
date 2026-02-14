@@ -8,6 +8,7 @@
 *.swp
 *.swo
 *~
+.gemini/
 
 # OS
 .DS_Store
@@ -16,7 +17,12 @@ Thumbs.db
 # Fuzz
 cbc-core/fuzz/corpus/
 cbc-core/fuzz/artifacts/
+cbc-core/fuzz/target/
 
 # Test artifacts
 /tmp/
 *.cbc
+
+# Keys (never commit private keys)
+*.pem
+*.key

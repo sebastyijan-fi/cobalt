@@ -1,8 +1,12 @@
-/// Hash suite abstraction over BLAKE3 and SHA-256.
-///
-/// All commitment sizes in CBC v0.1 are 32 bytes.
+//! Hash suite abstraction for CBC v0.1 (§8.1).
+//!
+//! CBC supports two hash algorithms, both producing 32-byte digests:
+//! - **BLAKE3** (0x01) — default, high-performance
+//! - **SHA-256** (0x02) — widely deployed, NIST-approved
 
 /// Hash algorithm identifier (§8.1).
+///
+/// Used throughout the format for all commitment, chain, and Merkle computations.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
 pub enum HashSuite {
@@ -11,6 +15,7 @@ pub enum HashSuite {
 }
 
 impl HashSuite {
+    /// Decode a hash suite identifier byte. Returns `None` for unknown IDs.
     pub fn from_id(id: u8) -> Option<Self> {
         match id {
             0x01 => Some(Self::Blake3),
@@ -19,6 +24,7 @@ impl HashSuite {
         }
     }
 
+    /// Return the wire-format identifier byte for this hash suite.
     pub fn id(self) -> u8 {
         self as u8
     }

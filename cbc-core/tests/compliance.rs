@@ -1,10 +1,9 @@
-/// Integration tests for CBC spec compliance.
-///
-/// Covers:
-/// - §13.1 Reference test vector (minimal artifact)
-/// - §12.3 Positive tests (T1–T5) via transforms
-/// - §12.4 Negative tests (N1–N5)
-
+//! Integration tests for CBC spec compliance.
+//!
+//! Covers:
+//! - §13.1 Reference test vector (minimal artifact)
+//! - §12.3 Positive tests (T1–T5) via transforms
+//! - §12.4 Negative tests (N1–N5)
 use cbc_core::bootstrap::*;
 use cbc_core::decoder;
 use cbc_core::encoder::{self, EncoderConfig};
@@ -53,8 +52,8 @@ fn test_reference_vector_minimal_artifact() {
 
     // Verify structure sizes
     assert_eq!(&artifact[0..4], b"CBC1"); // magic
-    assert_eq!(artifact[6], 0x01);        // hash_suite = blake3
-    assert_eq!(artifact[7], 0x01);        // commitment_mode = Family A
+    assert_eq!(artifact[6], 0x01); // hash_suite = blake3
+    assert_eq!(artifact[7], 0x01); // commitment_mode = Family A
 
     println!("Reference artifact size: {} bytes", artifact.len());
     println!("Chain root: {}", hex::encode(decoded.chain_root));
@@ -105,7 +104,10 @@ fn test_n2_truncate_without_footer_update() {
     truncated.extend_from_slice(&artifact[footer_start..]);
 
     let result = decoder::decode(&truncated);
-    assert!(result.is_err(), "N2: truncation without footer update must fail");
+    assert!(
+        result.is_err(),
+        "N2: truncation without footer update must fail"
+    );
     println!("N2 PASS: {:?}", result.unwrap_err());
 }
 
@@ -202,7 +204,11 @@ fn test_n5_subrange_as_complete() {
 #[test]
 fn test_all_families_all_hashes() {
     for suite in [HashSuite::Blake3, HashSuite::Sha256] {
-        for mode in [FAMILY_A_BIT, FAMILY_A_BIT | FAMILY_B_BIT, FAMILY_A_BIT | FAMILY_B_BIT | FAMILY_C_BIT] {
+        for mode in [
+            FAMILY_A_BIT,
+            FAMILY_A_BIT | FAMILY_B_BIT,
+            FAMILY_A_BIT | FAMILY_B_BIT | FAMILY_C_BIT,
+        ] {
             let config = EncoderConfig {
                 hash_suite: suite,
                 commitment_mode: mode,
@@ -214,8 +220,10 @@ fn test_all_families_all_hashes() {
                 let payload = vec![0xAB; payload_size];
                 let artifact = encoder::encode(&config, &payload, [99u8; 16], &[]);
                 let decoded = decoder::decode(&artifact).unwrap();
-                assert_eq!(decoded.payload, payload,
-                    "Failed for suite={suite:?} mode=0x{mode:02x} payload_size={payload_size}");
+                assert_eq!(
+                    decoded.payload, payload,
+                    "Failed for suite={suite:?} mode=0x{mode:02x} payload_size={payload_size}"
+                );
             }
         }
     }

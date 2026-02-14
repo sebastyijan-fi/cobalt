@@ -8,7 +8,6 @@
 /// 5. MUST verify footer_commitment
 /// 6. MUST treat any failure as hard error
 /// 7. MUST NOT expose payload from a failed artifact
-
 use crate::block::{block_wire_size, Block};
 use crate::bootstrap::{BootstrapSegment, BOOTSTRAP_SIZE};
 use crate::chain;
@@ -85,19 +84,19 @@ pub fn decode(data: &[u8]) -> Result<DecodedArtifact> {
             let marker_data = &data[offset..];
             let (block_type, payload_size, consumed) = prefix::decode_prefix_marker(marker_data)?;
             if block_type != prefix::BLOCK_TYPE_DATA {
-                return Err(CbcError::PrefixParseError(
-                    format!("block {i}: unexpected block type 0x{block_type:02x}"),
-                ));
+                return Err(CbcError::PrefixParseError(format!(
+                    "block {i}: unexpected block type 0x{block_type:02x}"
+                )));
             }
             if payload_size != block_payload_size {
-                return Err(CbcError::PrefixParseError(
-                    format!("block {i}: prefix payload size {payload_size} != {block_payload_size}"),
-                ));
+                return Err(CbcError::PrefixParseError(format!(
+                    "block {i}: prefix payload size {payload_size} != {block_payload_size}"
+                )));
             }
             if consumed != prefix_size {
-                return Err(CbcError::PrefixParseError(
-                    format!("block {i}: prefix marker size mismatch"),
-                ));
+                return Err(CbcError::PrefixParseError(format!(
+                    "block {i}: prefix marker size mismatch"
+                )));
             }
             offset += prefix_size;
         }

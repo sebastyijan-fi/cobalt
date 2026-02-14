@@ -2,6 +2,10 @@
 name = "cbc-core"
 version.workspace = true
 edition.workspace = true
+license.workspace = true
+repository.workspace = true
+keywords.workspace = true
+categories.workspace = true
 description = "Core library for CBC (Context-Bound Container) v0.1 — binary container format with intrinsic integrity"
 
 [dependencies]

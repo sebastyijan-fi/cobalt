@@ -1,8 +1,7 @@
-/// CBC Transform operations (§9).
-///
-/// Each transform decodes the source artifact, extracts/transforms the payload,
-/// re-encodes with new parameters, and produces a signed receipt.
-
+//! CBC Transform operations (§9).
+//!
+//! Each transform decodes the source artifact, extracts/transforms the payload,
+//! re-encodes with new parameters, and produces a signed receipt.
 use crate::error::Result;
 use crate::receipt::{self, Receipt, SigningKey, TransformType};
 use cbc_core::decoder;
@@ -82,12 +81,10 @@ pub fn truncate(
     let block_payload_size = decoded.bootstrap.block_payload_size;
 
     if keep_blocks == 0 || keep_blocks >= decoded.block_count {
-        return Err(crate::error::TransformError::InvalidTransform(
-            format!(
-                "keep_blocks ({keep_blocks}) must be > 0 and < block_count ({})",
-                decoded.block_count
-            ),
-        ));
+        return Err(crate::error::TransformError::InvalidTransform(format!(
+            "keep_blocks ({keep_blocks}) must be > 0 and < block_count ({})",
+            decoded.block_count
+        )));
     }
 
     // Extract payload for kept blocks
@@ -159,10 +156,7 @@ pub fn rechunk(
 ///
 /// Note: actual compression/decompression is not implemented in v0.1;
 /// this toggles the flag and re-encodes (payload bytes unchanged).
-pub fn recompress(
-    source: &[u8],
-    signing_key: &SigningKey,
-) -> Result<(Vec<u8>, Receipt)> {
+pub fn recompress(source: &[u8], signing_key: &SigningKey) -> Result<(Vec<u8>, Receipt)> {
     let decoded = decoder::decode(source)?;
 
     let new_flags = decoded.bootstrap.flags ^ cbc_core::bootstrap::FLAG_COMPRESSED;
@@ -187,10 +181,7 @@ pub fn recompress(
 }
 
 /// T4: Concatenate multiple artifacts (§9.4).
-pub fn concatenate(
-    sources: &[&[u8]],
-    signing_key: &SigningKey,
-) -> Result<(Vec<u8>, Vec<Receipt>)> {
+pub fn concatenate(sources: &[&[u8]], signing_key: &SigningKey) -> Result<(Vec<u8>, Vec<Receipt>)> {
     if sources.len() < 2 {
         return Err(crate::error::TransformError::InvalidTransform(
             "concatenation requires at least 2 sources".to_string(),
@@ -275,18 +266,16 @@ pub fn subrange_extract(
     let block_payload_size = decoded.bootstrap.block_payload_size;
 
     if start_block > end_block || end_block >= decoded.block_count {
-        return Err(crate::error::TransformError::InvalidTransform(
-            format!(
-                "invalid range [{start_block}, {end_block}] for artifact with {} blocks",
-                decoded.block_count
-            ),
-        ));
+        return Err(crate::error::TransformError::InvalidTransform(format!(
+            "invalid range [{start_block}, {end_block}] for artifact with {} blocks",
+            decoded.block_count
+        )));
     }
 
     // Extract the payload for the specified block range
     let start_byte = start_block as usize * block_payload_size as usize;
-    let end_byte = ((end_block as usize + 1) * block_payload_size as usize)
-        .min(decoded.payload.len());
+    let end_byte =
+        ((end_block as usize + 1) * block_payload_size as usize).min(decoded.payload.len());
     let new_payload = decoded.payload[start_byte..end_byte].to_vec();
 
     let config = EncoderConfig {

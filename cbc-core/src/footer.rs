@@ -1,5 +1,4 @@
 /// Stream Footer — appears after the last block in a CBC artifact (§5.4).
-
 use crate::error::{CbcError, Result};
 use crate::hash::HashSuite;
 
@@ -20,7 +19,7 @@ pub struct StreamFooter {
     pub chain_root: [u8; 32],
     pub merkle_root: Option<[u8; 32]>,
     pub receipt_count: u32,
-    pub receipt_slots: Vec<Vec<u8>>,    // Raw receipt bytes
+    pub receipt_slots: Vec<Vec<u8>>, // Raw receipt bytes
     pub footer_commitment: [u8; 32],
 }
 
@@ -65,11 +64,7 @@ impl StreamFooter {
         }
 
         // Compute footer_commitment over everything so far
-        let footer_commitment = suite.hash(&[
-            b"CBC-v1-footer",
-            params_hash.as_slice(),
-            &buf,
-        ]);
+        let footer_commitment = suite.hash(&[b"CBC-v1-footer", params_hash.as_slice(), &buf]);
 
         buf.extend_from_slice(&footer_commitment);
 
@@ -80,11 +75,8 @@ impl StreamFooter {
         // Recompute footer_commitment now that length is set
         let commitment_offset = buf.len() - FOOTER_COMMITMENT_SIZE;
         let pre_commitment = &buf[..commitment_offset];
-        let footer_commitment = suite.hash(&[
-            b"CBC-v1-footer",
-            params_hash.as_slice(),
-            pre_commitment,
-        ]);
+        let footer_commitment =
+            suite.hash(&[b"CBC-v1-footer", params_hash.as_slice(), pre_commitment]);
         buf[commitment_offset..].copy_from_slice(&footer_commitment);
 
         buf
@@ -122,7 +114,10 @@ impl StreamFooter {
 
         // footer_length
         let footer_length = u32::from_le_bytes([
-            bytes[offset], bytes[offset + 1], bytes[offset + 2], bytes[offset + 3],
+            bytes[offset],
+            bytes[offset + 1],
+            bytes[offset + 2],
+            bytes[offset + 3],
         ]) as usize;
         offset += 4;
 
@@ -150,7 +145,10 @@ impl StreamFooter {
 
         // receipt_count
         let receipt_count = u32::from_le_bytes([
-            bytes[offset], bytes[offset + 1], bytes[offset + 2], bytes[offset + 3],
+            bytes[offset],
+            bytes[offset + 1],
+            bytes[offset + 2],
+            bytes[offset + 3],
         ]);
         offset += 4;
 
@@ -164,7 +162,10 @@ impl StreamFooter {
                 });
             }
             let receipt_len = u32::from_le_bytes([
-                bytes[offset], bytes[offset + 1], bytes[offset + 2], bytes[offset + 3],
+                bytes[offset],
+                bytes[offset + 1],
+                bytes[offset + 2],
+                bytes[offset + 3],
             ]) as usize;
             offset += 4;
 
@@ -185,11 +186,7 @@ impl StreamFooter {
 
         // Verify footer_commitment
         let pre_commitment = &bytes[..commitment_offset];
-        let expected = suite.hash(&[
-            b"CBC-v1-footer",
-            params_hash.as_slice(),
-            pre_commitment,
-        ]);
+        let expected = suite.hash(&[b"CBC-v1-footer", params_hash.as_slice(), pre_commitment]);
 
         if expected != footer_commitment {
             return Err(CbcError::FooterCommitmentMismatch);
@@ -244,13 +241,7 @@ mod tests {
         let params_hash = [0xBB; 32];
         let suite = HashSuite::Blake3;
 
-        let encoded = StreamFooter::encode(
-            chain_root,
-            Some(merkle_root),
-            &[],
-            &params_hash,
-            suite,
-        );
+        let encoded = StreamFooter::encode(chain_root, Some(merkle_root), &[], &params_hash, suite);
         let decoded = StreamFooter::decode(&encoded, true, &params_hash, suite).unwrap();
 
         assert_eq!(decoded.chain_root, chain_root);

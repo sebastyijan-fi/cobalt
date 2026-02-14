@@ -1,6 +1,5 @@
-/// CBC Transform Receipts — signed proof of derivation (§6).
-
-use crate::error::{TransformError, Result};
+//! CBC Transform Receipts — signed proof of derivation (§6).
+use crate::error::{Result, TransformError};
 
 /// Transform type codes (§6.2).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -105,10 +104,12 @@ impl Receipt {
         let receipt_version = u16::from_le_bytes([data[offset], data[offset + 1]]);
         offset += 2;
 
-        let sig_alg = SigAlgorithm::from_u8(data[offset])
-            .ok_or_else(|| TransformError::InvalidTransform(
-                format!("unknown sig algorithm: 0x{:02x}", data[offset]),
-            ))?;
+        let sig_alg = SigAlgorithm::from_u8(data[offset]).ok_or_else(|| {
+            TransformError::InvalidTransform(format!(
+                "unknown sig algorithm: 0x{:02x}",
+                data[offset]
+            ))
+        })?;
         offset += 1;
 
         // reserved
@@ -131,16 +132,23 @@ impl Receipt {
         offset += 32;
 
         let timestamp = u64::from_le_bytes([
-            data[offset], data[offset + 1], data[offset + 2], data[offset + 3],
-            data[offset + 4], data[offset + 5], data[offset + 6], data[offset + 7],
+            data[offset],
+            data[offset + 1],
+            data[offset + 2],
+            data[offset + 3],
+            data[offset + 4],
+            data[offset + 5],
+            data[offset + 6],
+            data[offset + 7],
         ]);
         offset += 8;
 
         let transform_type_raw = u16::from_le_bytes([data[offset], data[offset + 1]]);
-        let transform_type = TransformType::from_u16(transform_type_raw)
-            .ok_or_else(|| TransformError::InvalidTransform(
-                format!("unknown transform type: 0x{transform_type_raw:04x}"),
-            ))?;
+        let transform_type = TransformType::from_u16(transform_type_raw).ok_or_else(|| {
+            TransformError::InvalidTransform(format!(
+                "unknown transform type: 0x{transform_type_raw:04x}"
+            ))
+        })?;
         offset += 2;
 
         let transform_desc_len = u16::from_le_bytes([data[offset], data[offset + 1]]) as usize;
@@ -238,20 +246,17 @@ impl SigningKey {
     /// Get the public key bytes for this signing key.
     pub fn public_key_bytes(&self) -> Vec<u8> {
         match self {
-            SigningKey::EcdsaP256(key) => {
-                key.verifying_key().to_encoded_point(false).as_bytes().to_vec()
-            }
-            SigningKey::Ed25519(key) => {
-                key.verifying_key().to_bytes().to_vec()
-            }
+            SigningKey::EcdsaP256(key) => key
+                .verifying_key()
+                .to_encoded_point(false)
+                .as_bytes()
+                .to_vec(),
+            SigningKey::Ed25519(key) => key.verifying_key().to_bytes().to_vec(),
         }
     }
 
     /// Sign a body hash, returning the signature bytes.
-    pub fn sign_hash(
-        &self,
-        body_hash: &[u8; 32],
-    ) -> Result<Vec<u8>> {
+    pub fn sign_hash(&self, body_hash: &[u8; 32]) -> Result<Vec<u8>> {
         match self {
             SigningKey::EcdsaP256(key) => {
                 use p256::ecdsa::{signature::Signer, Signature};
@@ -322,31 +327,37 @@ pub fn verify_receipt(receipt: &Receipt, hash_suite: cbc_core::HashSuite) -> Res
             use p256::ecdsa::{signature::Verifier, Signature, VerifyingKey};
             use p256::EncodedPoint;
 
-            let point = EncodedPoint::from_bytes(&receipt.signer_id)
-                .map_err(|e| TransformError::VerificationError(format!("invalid public key: {e}")))?;
-            let verifying_key = VerifyingKey::from_encoded_point(&point)
-                .map_err(|e| TransformError::VerificationError(format!("invalid public key: {e}")))?;
-            let sig = Signature::from_der(&receipt.sig_bytes)
-                .map_err(|e| TransformError::VerificationError(format!("invalid signature: {e}")))?;
+            let point = EncodedPoint::from_bytes(&receipt.signer_id).map_err(|e| {
+                TransformError::VerificationError(format!("invalid public key: {e}"))
+            })?;
+            let verifying_key = VerifyingKey::from_encoded_point(&point).map_err(|e| {
+                TransformError::VerificationError(format!("invalid public key: {e}"))
+            })?;
+            let sig = Signature::from_der(&receipt.sig_bytes).map_err(|e| {
+                TransformError::VerificationError(format!("invalid signature: {e}"))
+            })?;
 
-            verifying_key.verify(&body_hash, &sig)
-                .map_err(|e| TransformError::VerificationError(format!("signature verification failed: {e}")))?;
+            verifying_key.verify(&body_hash, &sig).map_err(|e| {
+                TransformError::VerificationError(format!("signature verification failed: {e}"))
+            })?;
         }
         SigAlgorithm::Ed25519 => {
             use ed25519_dalek::{Signature, Verifier, VerifyingKey};
 
-            let pub_bytes: [u8; 32] = receipt.signer_id.as_slice()
-                .try_into()
-                .map_err(|_| TransformError::VerificationError("invalid Ed25519 public key length".to_string()))?;
-            let verifying_key = VerifyingKey::from_bytes(&pub_bytes)
-                .map_err(|e| TransformError::VerificationError(format!("invalid public key: {e}")))?;
-            let sig_bytes: [u8; 64] = receipt.sig_bytes.as_slice()
-                .try_into()
-                .map_err(|_| TransformError::VerificationError("invalid Ed25519 signature length".to_string()))?;
+            let pub_bytes: [u8; 32] = receipt.signer_id.as_slice().try_into().map_err(|_| {
+                TransformError::VerificationError("invalid Ed25519 public key length".to_string())
+            })?;
+            let verifying_key = VerifyingKey::from_bytes(&pub_bytes).map_err(|e| {
+                TransformError::VerificationError(format!("invalid public key: {e}"))
+            })?;
+            let sig_bytes: [u8; 64] = receipt.sig_bytes.as_slice().try_into().map_err(|_| {
+                TransformError::VerificationError("invalid Ed25519 signature length".to_string())
+            })?;
             let sig = Signature::from_bytes(&sig_bytes);
 
-            verifying_key.verify(&body_hash, &sig)
-                .map_err(|e| TransformError::VerificationError(format!("signature verification failed: {e}")))?;
+            verifying_key.verify(&body_hash, &sig).map_err(|e| {
+                TransformError::VerificationError(format!("signature verification failed: {e}"))
+            })?;
         }
     }
 

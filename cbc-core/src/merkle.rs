@@ -2,7 +2,6 @@
 ///
 /// Blocks become leaves in a binary Merkle tree for random-access verification
 /// and partial proofs.
-
 use crate::hash::HashSuite;
 
 /// Compute a Merkle leaf hash.
@@ -53,11 +52,7 @@ pub struct MerkleProof {
 
 impl MerkleTree {
     /// Build a Merkle tree from padded payloads.
-    pub fn build(
-        params_hash: &[u8; 32],
-        padded_payloads: &[Vec<u8>],
-        suite: HashSuite,
-    ) -> Self {
+    pub fn build(params_hash: &[u8; 32], padded_payloads: &[Vec<u8>], suite: HashSuite) -> Self {
         if padded_payloads.is_empty() {
             return Self {
                 nodes: vec![],
@@ -79,7 +74,7 @@ impl MerkleTree {
         // Build tree bottom-up
         while levels.last().unwrap().len() > 1 {
             let current = levels.last().unwrap();
-            let mut next_level = Vec::with_capacity((current.len() + 1) / 2);
+            let mut next_level = Vec::with_capacity(current.len().div_ceil(2));
 
             let mut i = 0;
             while i < current.len() {
@@ -114,7 +109,11 @@ impl MerkleTree {
         let mut idx = leaf_index;
 
         for level in 0..self.nodes.len() - 1 {
-            let sibling_idx = if idx % 2 == 0 { idx + 1 } else { idx - 1 };
+            let sibling_idx = if idx.is_multiple_of(2) {
+                idx + 1
+            } else {
+                idx - 1
+            };
             let sibling = if sibling_idx < self.nodes[level].len() {
                 self.nodes[level][sibling_idx]
             } else {
@@ -142,7 +141,7 @@ impl MerkleTree {
         let mut idx = proof.leaf_index;
 
         for (_level, sibling) in &proof.siblings {
-            current = if idx % 2 == 0 {
+            current = if idx.is_multiple_of(2) {
                 compute_node(&current, sibling, suite)
             } else {
                 compute_node(sibling, &current, suite)
@@ -160,6 +159,242 @@ impl MerkleTree {
         } else {
             &self.nodes[0]
         }
+    }
+
+    /// Generate a range proof for leaves [start..=end].
+    ///
+    /// Returns a `RangeProof` that proves these leaves belong to the tree
+    /// using O(log n) sibling hashes per level.
+    pub fn prove_range(&self, start: usize, end: usize) -> Option<RangeProof> {
+        if start > end || end >= self.leaf_count || self.nodes.is_empty() {
+            return None;
+        }
+
+        let mut proof_nodes: Vec<ProofNode> = Vec::new();
+        let mut range_start = start;
+        let mut range_end = end;
+
+        // Walk up each level, collecting siblings outside the covered range
+        for level in 0..self.nodes.len() - 1 {
+            let level_nodes = &self.nodes[level];
+
+            // If the range start is odd, we need its left sibling
+            if range_start % 2 == 1 {
+                proof_nodes.push(ProofNode {
+                    level,
+                    index: range_start - 1,
+                    hash: level_nodes[range_start - 1],
+                    side: Side::Left,
+                });
+            }
+
+            // If the range end is even, we need its right sibling
+            if range_end.is_multiple_of(2) {
+                if range_end + 1 < level_nodes.len() {
+                    proof_nodes.push(ProofNode {
+                        level,
+                        index: range_end + 1,
+                        hash: level_nodes[range_end + 1],
+                        side: Side::Right,
+                    });
+                } else {
+                    // Odd node — paired with itself
+                    proof_nodes.push(ProofNode {
+                        level,
+                        index: range_end,
+                        hash: level_nodes[range_end],
+                        side: Side::Right,
+                    });
+                }
+            }
+
+            // Move to parent level
+            range_start /= 2;
+            range_end /= 2;
+        }
+
+        Some(RangeProof {
+            start,
+            end,
+            leaf_count: self.leaf_count,
+            proof_nodes,
+        })
+    }
+}
+
+/// Side indicator for proof nodes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Side {
+    Left,
+    Right,
+}
+
+/// A sibling hash in a range proof.
+#[derive(Debug, Clone)]
+pub struct ProofNode {
+    pub level: usize,
+    pub index: usize,
+    pub hash: [u8; 32],
+    pub side: Side,
+}
+
+/// A Merkle range proof for a contiguous range of leaves [start..=end].
+///
+/// Proves that specific leaves belong to a tree with a known root,
+/// using O(log n) sibling hashes per edge of the range.
+#[derive(Debug, Clone)]
+pub struct RangeProof {
+    /// Start leaf index (inclusive).
+    pub start: usize,
+    /// End leaf index (inclusive).
+    pub end: usize,
+    /// Total number of leaves in the tree.
+    pub leaf_count: usize,
+    /// Sibling hashes needed to reconstruct the root.
+    pub proof_nodes: Vec<ProofNode>,
+}
+
+impl RangeProof {
+    /// Verify this range proof against a known root.
+    ///
+    /// `leaf_hashes` must contain the hashes for leaves [start..=end].
+    pub fn verify(&self, leaf_hashes: &[[u8; 32]], root: &[u8; 32], suite: HashSuite) -> bool {
+        let expected_count = self.end - self.start + 1;
+        if leaf_hashes.len() != expected_count {
+            return false;
+        }
+
+        // Build initial level: leaves with their absolute indices
+        let mut current: Vec<(usize, [u8; 32])> = leaf_hashes
+            .iter()
+            .enumerate()
+            .map(|(i, h)| (self.start + i, *h))
+            .collect();
+
+        let mut level = 0;
+        let mut level_size = self.leaf_count;
+
+        // Walk up the tree until we reach the root
+        while level_size > 1 || current.len() != 1 || current[0].0 != 0 {
+            // Insert proof nodes for this level
+            for pn in &self.proof_nodes {
+                if pn.level == level {
+                    current.push((pn.index, pn.hash));
+                }
+            }
+            current.sort_by_key(|(idx, _)| *idx);
+            // Deduplicate (shouldn't happen, but be safe)
+            current.dedup_by_key(|(idx, _)| *idx);
+
+            // Pair up nodes to compute parent level
+            let mut next: Vec<(usize, [u8; 32])> = Vec::new();
+            let mut i = 0;
+            while i < current.len() {
+                let (idx, hash) = current[i];
+                let parent_idx = idx / 2;
+
+                if idx % 2 == 0 {
+                    // Left child
+                    if i + 1 < current.len() && current[i + 1].0 == idx + 1 {
+                        // Has right sibling
+                        let (_, right) = current[i + 1];
+                        next.push((parent_idx, compute_node(&hash, &right, suite)));
+                        i += 2;
+                    } else if idx + 1 >= level_size {
+                        // Last node in an odd-sized level: pair with itself
+                        next.push((parent_idx, compute_node(&hash, &hash, suite)));
+                        i += 1;
+                    } else {
+                        // Missing right sibling — proof is incomplete
+                        return false;
+                    }
+                } else {
+                    // Right child without preceding left — proof is incomplete
+                    return false;
+                }
+            }
+
+            if next.is_empty() {
+                return false;
+            }
+
+            level += 1;
+            level_size = level_size.div_ceil(2);
+            current = next;
+        }
+
+        current.len() == 1 && current[0].1 == *root
+    }
+
+    /// Encode range proof to bytes for transport.
+    pub fn encode(&self) -> Vec<u8> {
+        let mut buf = Vec::new();
+        buf.extend_from_slice(&(self.start as u32).to_le_bytes());
+        buf.extend_from_slice(&(self.end as u32).to_le_bytes());
+        buf.extend_from_slice(&(self.leaf_count as u32).to_le_bytes());
+        buf.extend_from_slice(&(self.proof_nodes.len() as u32).to_le_bytes());
+
+        for node in &self.proof_nodes {
+            buf.extend_from_slice(&(node.level as u16).to_le_bytes());
+            buf.extend_from_slice(&(node.index as u32).to_le_bytes());
+            buf.push(if node.side == Side::Left { 0 } else { 1 });
+            buf.extend_from_slice(&node.hash);
+        }
+
+        buf
+    }
+
+    /// Decode range proof from bytes.
+    pub fn decode(data: &[u8]) -> Option<Self> {
+        if data.len() < 16 {
+            return None;
+        }
+
+        let start = u32::from_le_bytes([data[0], data[1], data[2], data[3]]) as usize;
+        let end = u32::from_le_bytes([data[4], data[5], data[6], data[7]]) as usize;
+        let leaf_count = u32::from_le_bytes([data[8], data[9], data[10], data[11]]) as usize;
+        let node_count = u32::from_le_bytes([data[12], data[13], data[14], data[15]]) as usize;
+
+        let mut offset = 16;
+        let mut proof_nodes = Vec::with_capacity(node_count);
+
+        for _ in 0..node_count {
+            if offset + 39 > data.len() {
+                return None;
+            }
+            let level = u16::from_le_bytes([data[offset], data[offset + 1]]) as usize;
+            offset += 2;
+            let index = u32::from_le_bytes([
+                data[offset],
+                data[offset + 1],
+                data[offset + 2],
+                data[offset + 3],
+            ]) as usize;
+            offset += 4;
+            let side = if data[offset] == 0 {
+                Side::Left
+            } else {
+                Side::Right
+            };
+            offset += 1;
+            let mut hash = [0u8; 32];
+            hash.copy_from_slice(&data[offset..offset + 32]);
+            offset += 32;
+
+            proof_nodes.push(ProofNode {
+                level,
+                index,
+                hash,
+                side,
+            });
+        }
+
+        Some(RangeProof {
+            start,
+            end,
+            leaf_count,
+            proof_nodes,
+        })
     }
 }
 
@@ -225,9 +460,9 @@ mod tests {
         ];
         let tree = MerkleTree::build(&ph, &payloads, HashSuite::Blake3);
 
-        for i in 0..4 {
+        for (i, payload) in payloads.iter().enumerate() {
             let proof = tree.prove(i).unwrap();
-            let leaf = compute_leaf(&ph, i as u64, &payloads[i], HashSuite::Blake3);
+            let leaf = compute_leaf(&ph, i as u64, payload, HashSuite::Blake3);
             assert!(
                 MerkleTree::verify_proof(&proof, leaf, &tree.root, HashSuite::Blake3),
                 "Proof failed for leaf {i}"

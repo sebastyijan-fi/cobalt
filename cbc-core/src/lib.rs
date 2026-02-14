@@ -1,24 +1,43 @@
-/// CBC Core — Context-Bound Container format library (v0.1).
-///
-/// This crate implements the CBC v0.1 specification:
-/// - Bootstrap Segment (64-byte preamble)
-/// - Block format with CRC-32C integrity
-/// - Family A: Linear hash-chain commitments
-/// - Family B: Merkle tree range constraints
-/// - Family C: Prefix parse constraints
-/// - Stream Footer with commitment verification
-/// - Full encoder and decoder with mandatory validation
+//! # CBC Core
+//!
+//! Context-Bound Container format library (v0.1).
+//!
+//! A CBC artifact is a self-validating, tamper-evident binary container.
+//! Validity depends on intrinsic relational constraints among blocks:
+//!
+//! - **Family A** — Linear hash-chain commitments bind every block to a single root
+//! - **Family B** — Merkle tree enables O(log n) range proofs for selective disclosure
+//! - **Family C** — Prefix parse constraints enable structural resynchronization
+//!
+//! ## Quick Start
+//!
+//! ```rust,no_run
+//! use cbc_core::{EncoderConfig, HashSuite, encoder, decoder};
+//! use cbc_core::bootstrap::FAMILY_A_BIT;
+//!
+//! let config = EncoderConfig {
+//!     hash_suite: HashSuite::Blake3,
+//!     commitment_mode: FAMILY_A_BIT,
+//!     block_payload_size: 4096,
+//!     flags: 0,
+//! };
+//!
+//! let artifact = encoder::encode(&config, b"hello world", [0u8; 16], &[]);
+//! let decoded = decoder::decode(&artifact).unwrap();
+//! assert_eq!(decoded.payload, b"hello world");
+//! ```
 
-pub mod error;
-pub mod hash;
-pub mod bootstrap;
 pub mod block;
+pub mod bootstrap;
 pub mod chain;
+pub mod decoder;
+pub mod encoder;
+pub mod error;
+pub mod footer;
+pub mod hash;
 pub mod merkle;
 pub mod prefix;
-pub mod footer;
-pub mod encoder;
-pub mod decoder;
+pub mod streaming;
 
 // Re-export key types at crate root
 pub use bootstrap::BootstrapSegment;

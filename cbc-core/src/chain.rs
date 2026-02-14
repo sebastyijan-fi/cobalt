@@ -1,17 +1,12 @@
 /// Family A — Linear hash-chain constraints (§4.1).
 ///
 /// Provides integrity and ordering guarantees by chaining block commitments.
-
 use crate::hash::HashSuite;
 
 /// Compute the initial commitment c₀.
 ///
 /// c₀ = H("CBC-v1" || params_canonical || bootstrap_nonce)
-pub fn compute_c0(
-    params_canonical: &[u8; 40],
-    nonce: &[u8; 16],
-    suite: HashSuite,
-) -> [u8; 32] {
+pub fn compute_c0(params_canonical: &[u8; 40], nonce: &[u8; 16], suite: HashSuite) -> [u8; 32] {
     suite.hash(&[b"CBC-v1", params_canonical.as_slice(), nonce.as_slice()])
 }
 
@@ -169,7 +164,11 @@ mod tests {
         let swapped_payloads = vec![payloads[1].clone(), payloads[0].clone()];
         let swapped_commitments = [commitments[1], commitments[0]];
         let result = verify_chain(
-            &params, &nonce, &swapped_payloads, &swapped_commitments, HashSuite::Blake3,
+            &params,
+            &nonce,
+            &swapped_payloads,
+            &swapped_commitments,
+            HashSuite::Blake3,
         );
         assert!(result.is_err());
     }

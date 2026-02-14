@@ -1,5 +1,4 @@
 /// CBC Encoder — produces a complete CBC artifact from raw payload bytes.
-
 use crate::block::Block;
 use crate::bootstrap::{BootstrapSegment, FAMILY_A_BIT, FAMILY_B_BIT, FAMILY_C_BIT};
 use crate::chain;
@@ -69,8 +68,12 @@ pub fn encode(
         .collect();
 
     // 4. Compute chain commitments (Family A — always required)
-    let (commitments, chain_root) =
-        chain::compute_chain(&params_canonical, &nonce, &padded_payloads, config.hash_suite);
+    let (commitments, chain_root) = chain::compute_chain(
+        &params_canonical,
+        &nonce,
+        &padded_payloads,
+        config.hash_suite,
+    );
 
     // Set commitments on blocks
     for (block, commitment) in blocks.iter_mut().zip(commitments.iter()) {
@@ -96,10 +99,7 @@ pub fn encode(
     let use_prefix = config.commitment_mode & FAMILY_C_BIT != 0;
     for block in &blocks {
         if use_prefix {
-            let marker = prefix::encode_prefix_marker(
-                prefix::BLOCK_TYPE_DATA,
-                block_payload_size,
-            );
+            let marker = prefix::encode_prefix_marker(prefix::BLOCK_TYPE_DATA, block_payload_size);
             output.extend_from_slice(&marker);
         }
         output.extend_from_slice(&block.encode(block_payload_size));

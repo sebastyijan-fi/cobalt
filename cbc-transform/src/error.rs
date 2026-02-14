@@ -1,5 +1,4 @@
-/// CBC Transform — error types.
-
+//! CBC Transform — error types.
 use thiserror::Error;
 
 #[derive(Debug, Error)]

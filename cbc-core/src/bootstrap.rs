@@ -1,5 +1,4 @@
 /// Bootstrap Segment — the fixed 64-byte preamble of every CBC artifact (§5.2).
-
 use crate::error::{CbcError, Result};
 use crate::hash::HashSuite;
 
@@ -122,8 +121,8 @@ impl BootstrapSegment {
         }
 
         // Hash suite
-        let hash_suite = HashSuite::from_id(bytes[6])
-            .ok_or(CbcError::UnknownHashSuite(bytes[6]))?;
+        let hash_suite =
+            HashSuite::from_id(bytes[6]).ok_or(CbcError::UnknownHashSuite(bytes[6]))?;
 
         // Commitment mode — Family A must be set
         let commitment_mode = bytes[7];
@@ -137,8 +136,7 @@ impl BootstrapSegment {
 
         // Block payload size
         let block_payload_size = u32::from_le_bytes([bytes[8], bytes[9], bytes[10], bytes[11]]);
-        if block_payload_size < MIN_BLOCK_PAYLOAD
-            || block_payload_size > MAX_BLOCK_PAYLOAD
+        if !(MIN_BLOCK_PAYLOAD..=MAX_BLOCK_PAYLOAD).contains(&block_payload_size)
             || !block_payload_size.is_power_of_two()
         {
             return Err(CbcError::InvalidBlockPayloadSize(block_payload_size));
@@ -162,8 +160,7 @@ impl BootstrapSegment {
 
         // Reserved at offset 56 (8 bytes) must be zero
         let reserved_56 = u64::from_le_bytes([
-            bytes[56], bytes[57], bytes[58], bytes[59],
-            bytes[60], bytes[61], bytes[62], bytes[63],
+            bytes[56], bytes[57], bytes[58], bytes[59], bytes[60], bytes[61], bytes[62], bytes[63],
         ]);
         if reserved_56 != 0 {
             return Err(CbcError::NonZeroReserved { offset: 56 });

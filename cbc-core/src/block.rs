@@ -1,5 +1,4 @@
 /// Block format — the fundamental unit of payload + commitment (§5.3).
-
 use crate::error::{CbcError, Result};
 
 /// Block header size in bytes.
@@ -66,14 +65,12 @@ impl Block {
 
         // Payload (zero-padded)
         let payload_offset = BLOCK_HEADER_SIZE;
-        buf[payload_offset..payload_offset + self.payload.len()]
-            .copy_from_slice(&self.payload);
+        buf[payload_offset..payload_offset + self.payload.len()].copy_from_slice(&self.payload);
         // Rest is already zero-padded
 
         // Commitment (32 bytes at end)
         let commit_offset = BLOCK_HEADER_SIZE + block_payload_size as usize;
-        buf[commit_offset..commit_offset + COMMITMENT_SIZE]
-            .copy_from_slice(&self.commitment);
+        buf[commit_offset..commit_offset + COMMITMENT_SIZE].copy_from_slice(&self.commitment);
 
         buf
     }
@@ -133,8 +130,7 @@ impl Block {
 
         // Extract padded payload for CRC and commitment
         let payload_offset = BLOCK_HEADER_SIZE;
-        let padded_payload =
-            &bytes[payload_offset..payload_offset + block_payload_size as usize];
+        let padded_payload = &bytes[payload_offset..payload_offset + block_payload_size as usize];
 
         // Verify CRC-32C over padded payload
         let computed_crc = crc32c::crc32c(padded_payload);
@@ -147,8 +143,8 @@ impl Block {
         }
 
         // Extract actual payload (not padded)
-        let payload = bytes[payload_offset..payload_offset + header.payload_length as usize]
-            .to_vec();
+        let payload =
+            bytes[payload_offset..payload_offset + header.payload_length as usize].to_vec();
 
         // Extract commitment
         let commit_offset = BLOCK_HEADER_SIZE + block_payload_size as usize;
