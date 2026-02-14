@@ -9,7 +9,7 @@ categories.workspace = true
 description = "Transform operations and receipts for CBC (Context-Bound Container) v0.1"
 
 [dependencies]
-cbc-core = { path = "../cbc-core" }
+cbc-core = { path = "../cbc-core", version = "0.1.0" }
 p256 = { version = "0.13", features = ["ecdsa"] }
 ed25519-dalek = { version = "2", features = ["rand_core"] }
 rand = "0.8"

@@ -13,8 +13,8 @@ name = "cbc"
 path = "src/main.rs"
 
 [dependencies]
-cbc-core = { path = "../cbc-core" }
-cbc-transform = { path = "../cbc-transform" }
+cbc-core = { path = "../cbc-core", version = "0.1.0" }
+cbc-transform = { path = "../cbc-transform", version = "0.1.0" }
 clap = { version = "4", features = ["derive"] }
 hex = "0.4"
 rand = "0.8"
