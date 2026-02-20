@@ -11,7 +11,7 @@ categories.workspace = true
 [dependencies]
 aws-config = "1.1.7"
 aws-sdk-kms = "1.17.0"
-reqwest = { version = "0.11", features = ["json"] }
+reqwest = { version = "0.12", features = ["json"] }
 tokio = { version = "1.0", features = ["full"] }
 cbc-core = { path = "../cbc-core" }
 thiserror = "1.0"
