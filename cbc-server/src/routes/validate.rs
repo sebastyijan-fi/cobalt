@@ -18,14 +18,14 @@ pub async fn handle(
     Json(req): Json<ValidateRequest>,
 ) -> impl IntoResponse {
     use base64::Engine;
-    // Decode base64 
+    // Decode base64
     let artifact_bytes = match base64::prelude::BASE64_STANDARD.decode(&req.artifact_base64) {
         Ok(b) => b,
         Err(e) => {
             tracing::warn!("Failed to decode base64 artifact: {}", e);
             let res = ValidateResponse {
                 valid: false,
-                merkle_root: format!("Error: Base64 decode failed"),
+                merkle_root: "Error: Base64 decode failed".to_string(),
             };
             return (StatusCode::BAD_REQUEST, Json(res));
         }
@@ -38,13 +38,13 @@ pub async fn handle(
                 Some(mr) => hex::encode(mr),
                 None => "No Merkle Root (Family A)".into(),
             };
-            
+
             let res = ValidateResponse {
                 valid: true,
                 merkle_root: root,
             };
             (StatusCode::OK, Json(res))
-        },
+        }
         Err(e) => {
             tracing::warn!("Artifact validation failed: {:?}", e);
             let res = ValidateResponse {

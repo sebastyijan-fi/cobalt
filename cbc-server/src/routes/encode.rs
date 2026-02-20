@@ -27,10 +27,10 @@ pub async fn handle(
         encryption_key: None,
     };
 
-    // We can accept string payloads for now. 
+    // We can accept string payloads for now.
     // In a real scenario, we'd accept base64 binary or multipart streams.
     let payload = req.payload.into_bytes();
-    
+
     // We use a zero nonce for the demo. Real enterprise systems would generate this securely.
     let nonce = [0u8; 16];
 

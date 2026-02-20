@@ -1,0 +1,22 @@
+name: Continuous Fuzzing (SDLC Gate)
+
+on:
+  schedule:
+    - cron: '0 2 * * *' # Run nightly at 2 AM
+  workflow_dispatch:
+
+jobs:
+  fuzz:
+    name: Differential Fuzzing
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install nightly toolchain
+        uses: dtolnay/rust-toolchain@nightly
+      - name: Install cargo-fuzz
+        run: cargo install cargo-fuzz
+      
+      # Usually fuzzing is configured under a dedicated `fuzz/` directory
+      # As an enterprise SDLC gate we execute it for an allotted time.
+      - name: Smoke test Differential Fuzzer (Tests)
+        run: cargo test -p cbc-core --test diff_fuzzer

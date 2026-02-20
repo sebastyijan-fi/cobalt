@@ -45,12 +45,12 @@ async fn main() {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use async_trait::async_trait;
     use axum::{
         body::Body,
         http::{Request, StatusCode},
     };
-    use cbc_kms::{KmsSigner, KmsError};
-    use async_trait::async_trait;
+    use cbc_kms::{KmsError, KmsSigner};
     use serde_json::{json, Value};
     use tower::ServiceExt;
 
@@ -62,7 +62,12 @@ mod tests {
             Ok(b"mock_signature".to_vec())
         }
 
-        async fn verify(&self, _key_id: &str, _payload: &[u8], _sig: &[u8]) -> Result<bool, KmsError> {
+        async fn verify(
+            &self,
+            _key_id: &str,
+            _payload: &[u8],
+            _sig: &[u8],
+        ) -> Result<bool, KmsError> {
             Ok(true)
         }
     }
@@ -79,7 +84,12 @@ mod tests {
         let app = get_test_app().await;
 
         let response = app
-            .oneshot(Request::builder().uri("/health").body(Body::empty()).unwrap())
+            .oneshot(
+                Request::builder()
+                    .uri("/health")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
             .await
             .unwrap();
 
@@ -95,7 +105,8 @@ mod tests {
             "payload": "hello enterprise world"
         });
 
-        let response = app.clone()
+        let response = app
+            .clone()
             .oneshot(
                 Request::builder()
                     .method("POST")
@@ -109,20 +120,23 @@ mod tests {
 
         assert_eq!(response.status(), StatusCode::OK);
         // Wait, to parse body without full HTTP client, we collect bytes
-        let body_bytes = axum::body::to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let body_bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
         let encode_res: Value = serde_json::from_slice(&body_bytes).unwrap();
-        
+
         // Let's check status and if the merkle root is valid
         assert_eq!(encode_res["status"], "success");
         // We know encode will just use the default nonce so if we want the actual base64 artifact we'd need it in response
         // Currently encode response only returns merkle_root
         // Let's test providing an invalid artifact to validate
-        
+
         let validate_req = json!({
             "artifact_base64": "invalid base64!"
         });
-        
-        let response = app.clone()
+
+        let response = app
+            .clone()
             .oneshot(
                 Request::builder()
                     .method("POST")
@@ -133,7 +147,7 @@ mod tests {
             )
             .await
             .unwrap();
-            
+
         assert_eq!(response.status(), StatusCode::BAD_REQUEST);
     }
 
@@ -145,7 +159,8 @@ mod tests {
             "payload": "mock data for extraction feature"
         });
 
-        let response = app.clone()
+        let response = app
+            .clone()
             .oneshot(
                 Request::builder()
                     .method("POST")
@@ -158,15 +173,16 @@ mod tests {
             .unwrap();
 
         assert_eq!(response.status(), StatusCode::OK);
-        
+
         let extract_req = json!({
             "artifact_base64": "invalid base64 check",
             "start_block": 0,
             "end_block": 1,
             "kms_key_id": "mock-kms-key-123"
         });
-        
-        let response = app.clone()
+
+        let response = app
+            .clone()
             .oneshot(
                 Request::builder()
                     .method("POST")
@@ -177,7 +193,7 @@ mod tests {
             )
             .await
             .unwrap();
-            
+
         assert_eq!(response.status(), StatusCode::BAD_REQUEST);
     }
 }
