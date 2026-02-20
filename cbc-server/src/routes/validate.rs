@@ -2,6 +2,7 @@ use crate::state::AppState;
 use axum::{extract::State, http::StatusCode, response::IntoResponse, Json};
 use serde::{Deserialize, Serialize};
 
+#[allow(dead_code)]
 #[derive(Deserialize)]
 pub struct ValidateRequest {
     artifact_base64: String,

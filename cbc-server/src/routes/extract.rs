@@ -3,6 +3,7 @@ use axum::{extract::State, http::StatusCode, response::IntoResponse, Json};
 use cbc_kms::KmsSigner;
 use serde::{Deserialize, Serialize};
 
+#[allow(dead_code)]
 #[derive(Deserialize)]
 pub struct ExtractRequest {
     artifact_base64: String,

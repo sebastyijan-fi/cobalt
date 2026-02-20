@@ -2,6 +2,7 @@ use crate::state::AppState;
 use axum::{extract::State, http::StatusCode, response::IntoResponse, Json};
 use serde::{Deserialize, Serialize};
 
+#[allow(dead_code)]
 #[derive(Deserialize)]
 pub struct EncodeRequest {
     payload: String, // Base64 or standard string for demo

@@ -48,3 +48,6 @@ __pycache__/
 
 # WASM
 /pkg/
+
+# Large Data Files
+*.dat

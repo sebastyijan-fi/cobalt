@@ -3,6 +3,7 @@ use async_trait::async_trait;
 use reqwest::Client;
 
 /// HashiCorp Vault Transit Engine Signer Stub
+#[allow(dead_code)]
 pub struct VaultSigner {
     client: Client,
     vault_url: String,
@@ -21,7 +22,7 @@ impl VaultSigner {
 
 #[async_trait]
 impl KmsSigner for VaultSigner {
-    async fn sign(&self, key_id: &str, payload: &[u8]) -> Result<Vec<u8>, KmsError> {
+    async fn sign(&self, _key_id: &str, _payload: &[u8]) -> Result<Vec<u8>, KmsError> {
         // In a real implementation, this would hit the HashiCorp Vault transit engine transit/sign/{name} endpoint.
         // For the enterprise demo, we return a stub.
         Err(KmsError::Vault(
@@ -31,9 +32,9 @@ impl KmsSigner for VaultSigner {
 
     async fn verify(
         &self,
-        key_id: &str,
-        payload: &[u8],
-        signature: &[u8],
+        _key_id: &str,
+        _payload: &[u8],
+        _signature: &[u8],
     ) -> Result<bool, KmsError> {
         Err(KmsError::Vault(
             "Vault transit engine verify not fully implemented yet in stub".into(),
