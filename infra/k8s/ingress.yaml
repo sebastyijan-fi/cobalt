@@ -1,0 +1,22 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: cbc-server-ingress
+  annotations:
+    kubernetes.io/ingress.class: "nginx"
+    # Operational Security: Prevent massive payloads killing the async runtime
+    nginx.ingress.kubernetes.io/proxy-body-size: "100m"
+    # Enforce basic rate limiting for anti-scraping/anti-DoS
+    nginx.ingress.kubernetes.io/limit-rps: "50"
+spec:
+  rules:
+    - host: api.cobalt.internal
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: cbc-server
+                port:
+                  number: 80

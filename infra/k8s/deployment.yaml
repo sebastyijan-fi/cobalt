@@ -1,0 +1,39 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: cbc-server
+  labels:
+    app: cbc-server
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: cbc-server
+  template:
+    metadata:
+      labels:
+        app: cbc-server
+      annotations:
+        sidecar.istio.io/inject: "true" # Enforce mTLS sidecar
+    spec:
+      containers:
+        - name: cbc-server
+          image: cobalt/cbc-server:latest
+          ports:
+            - containerPort: 3030
+          # Operational Security: Strict Reliability Budgets
+          # Bounding memory ensures the 256 MiB ZSTD max + Overhead 
+          # safely kills the pod before bringing down the Kubelet.
+          resources:
+            requests:
+              cpu: "500m"
+              memory: "512Mi"
+            limits:
+              cpu: "2000m"
+              memory: "1024Mi"
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 3030
+            initialDelaySeconds: 5
+            periodSeconds: 10
