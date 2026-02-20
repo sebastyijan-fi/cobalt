@@ -37,12 +37,16 @@ proptest! {
         let path = temp_file.path().to_str().unwrap();
 
         // 3. Verify with Python Oracle
-        let output = Command::new("python3")
-            .arg("../scripts/ref_oracle.py")
+        let manifest_dir = std::env::var("CARGO_MANIFEST_DIR").unwrap();
+        let oracle_path = format!("{}/../scripts/ref_oracle.py", manifest_dir);
+        let python_exe = if cfg!(windows) { "python" } else { "python3" };
+
+        let output = Command::new(python_exe)
+            .arg(oracle_path)
             .arg(path)
             .arg("--json")
             .output()
-            .expect("Failed to run python3 scripts/ref_oracle.py");
+            .expect("Failed to run python/python3 scripts/ref_oracle.py");
 
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);

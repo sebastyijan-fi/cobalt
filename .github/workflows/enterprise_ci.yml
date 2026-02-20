@@ -43,6 +43,8 @@ jobs:
       - uses: actions/checkout@v4
       - name: Install stable toolchain
         uses: dtolnay/rust-toolchain@stable
+      - name: Install Python dependencies for oracle fuzzing
+        run: python3 -m pip install blake3
       - name: Generate Core Vectors
         run: cargo test -p cbc-core --test generate_vectors -- --nocapture
       - name: Run Tests
