@@ -1,10 +1,10 @@
+use base64::Engine;
 use cbc_core::bootstrap::*;
 use cbc_core::encoder::{self, EncoderConfig};
 use cbc_core::hash::HashSuite;
 use serde::Serialize;
 use std::fs::File;
 use std::io::Write;
-use base64::Engine;
 
 #[derive(Serialize)]
 pub struct ConformanceSuite {
@@ -37,7 +37,7 @@ pub fn generate_vectors() {
     };
     let payload_t1 = vec![0x42u8; 512];
     let artifact_t1 = encoder::encode(&config_minimal, &payload_t1, nonce, &[]).unwrap();
-    
+
     vectors.push(TestVector {
         id: "T1-MINIMAL".to_string(),
         r#type: "valid".to_string(),
@@ -59,7 +59,7 @@ pub fn generate_vectors() {
     let mut artifact_n1 = encoder::encode(&config_n1, &payload_n1, [42u8; 16], &[]).unwrap();
     let payload_offset = BOOTSTRAP_SIZE + 16 + 100;
     artifact_n1[payload_offset] ^= 0x01; // flip bit
-    
+
     vectors.push(TestVector {
         id: "N1-BIT-FLIP".to_string(),
         r#type: "invalid".to_string(),
@@ -92,9 +92,9 @@ pub fn generate_vectors() {
         version: "1.0".to_string(),
         vectors,
     };
-    
+
     let json_str = serde_json::to_string_pretty(&suite).unwrap();
-    
+
     let path = "tests/conformance/vectors.json";
     let mut file = File::create(path).unwrap();
     file.write_all(json_str.as_bytes()).unwrap();

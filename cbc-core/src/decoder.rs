@@ -207,7 +207,7 @@ pub fn decode(data: &[u8], key: Option<[u8; 32]>) -> Result<DecodedArtifact> {
                 .take(MAX_SIZE + 1)
                 .read_to_end(&mut decompressed)
                 .map_err(|e| CbcError::DecompressionError(e.to_string()))?;
-            
+
             if decompressed.len() > MAX_SIZE as usize {
                 return Err(CbcError::DecompressionError(
                     "Decompression exceeded 256 MiB limit (Zip-Bomb protection)".to_string(),

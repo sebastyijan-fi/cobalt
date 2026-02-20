@@ -206,18 +206,21 @@ fn test_n5_subrange_as_complete() {
 #[test]
 fn test_n6_malformed_footer_length() {
     let (mut artifact, _) = make_test_artifact();
-    
+
     let block_wire = cbc_core::block::block_wire_size(512).unwrap();
     let footer_start = BOOTSTRAP_SIZE + 2 * block_wire;
-    
+
     // Set footer_length to 0 (which is less than FOOTER_COMMITMENT_SIZE)
     artifact[footer_start + 4] = 0;
     artifact[footer_start + 5] = 0;
     artifact[footer_start + 6] = 0;
     artifact[footer_start + 7] = 0;
-    
+
     let result = decoder::decode(&artifact, None);
-    assert!(result.is_err(), "N6: malformed footer length must be handled cleanly");
+    assert!(
+        result.is_err(),
+        "N6: malformed footer length must be handled cleanly"
+    );
     println!("N6 PASS: {:?}", result.unwrap_err());
 }
 
@@ -231,27 +234,25 @@ fn test_n7_decompression_abuse() {
         flags: FLAG_COMPRESSED,
         encryption_key: None,
     };
-    
+
     // Create a highly compressible payload (300 MiB of zeros)
     let payload = vec![0u8; 300 * 1024 * 1024];
-    
+
     // Encode the compressed payload as a CBC artifact. The encoder will run zstd
     // which compresses this to a tiny size (a few KB).
     let artifact = encoder::encode(&config, &payload, [42u8; 16], &[]).unwrap();
-    
+
     // Decode it - should fail cleanly due to 256 MiB output size limit
     let result = decoder::decode(&artifact, None);
     assert!(
         result.is_err(),
         "N7: decompression of zip-bombs must cleanly fail"
     );
-    
+
     let err_msg = result.unwrap_err().to_string();
     assert!(err_msg.contains("exceeded 256 MiB limit"));
     println!("N7 PASS: {}", err_msg);
 }
-
-
 
 // =========================================================================
 // Additional round-trip tests
