@@ -2,9 +2,9 @@ name: Enterprise CI & SEC Gates
 
 on:
   push:
-    branches: [ "master", "main", "release/*" ]
+    branches: [ "main", "release/*" ]
   pull_request:
-    branches: [ "master", "main" ]
+    branches: [ "main" ]
 
 env:
   CARGO_TERM_COLOR: always
