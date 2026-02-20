@@ -123,6 +123,13 @@ impl StreamFooter {
         ]) as usize;
         offset += 4;
 
+        if footer_length < min_size {
+            return Err(CbcError::msg(format!(
+                "footer length {} is smaller than minimum required {}",
+                footer_length, min_size
+            )));
+        }
+
         if bytes.len() < footer_length {
             return Err(CbcError::InsufficientData {
                 need: footer_length,

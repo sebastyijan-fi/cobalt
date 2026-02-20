@@ -319,6 +319,12 @@ impl StreamingDecoder {
 
         let (mut block, _consumed) = if bootstrap.family_c() {
             let prefix_size = prefix::prefix_marker_size(bps);
+            if block_bytes.len() < prefix_size {
+                return Err(CbcError::InsufficientData {
+                    need: prefix_size,
+                    have: block_bytes.len(),
+                });
+            }
             let (bt, ps, c) = prefix::decode_prefix_marker(&block_bytes[..prefix_size])?;
             if bt != prefix::BLOCK_TYPE_DATA || ps != bps || c != prefix_size {
                 return Err(CbcError::PrefixParseError(
@@ -412,8 +418,22 @@ impl StreamingDecoder {
         if bootstrap.flags & crate::bootstrap::FLAG_COMPRESSED != 0 {
             #[cfg(feature = "std")]
             {
-                zstd::decode_all(&self.payload[..])
-                    .map_err(|e| CbcError::DecompressionError(e.to_string()))
+                use std::io::Read;
+                const MAX_SIZE: u64 = 256 * 1024 * 1024; // 256 MiB cap to prevent zip bombs
+                let decoder = zstd::stream::read::Decoder::new(&self.payload[..])
+                    .map_err(|e| CbcError::DecompressionError(e.to_string()))?;
+                let mut decompressed = Vec::new();
+                decoder
+                    .take(MAX_SIZE + 1)
+                    .read_to_end(&mut decompressed)
+                    .map_err(|e| CbcError::DecompressionError(e.to_string()))?;
+                
+                if decompressed.len() > MAX_SIZE as usize {
+                    return Err(CbcError::DecompressionError(
+                        "Decompression exceeded 256 MiB limit (Zip-Bomb protection)".to_string(),
+                    ));
+                }
+                Ok(decompressed)
             }
             #[cfg(not(feature = "std"))]
             {

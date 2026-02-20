@@ -1,9 +1,9 @@
-use cbc_kms::aws::AwsKmsSigner;
+use cbc_kms::{aws::AwsKmsSigner, KmsSigner};
 use std::sync::Arc;
 
 #[derive(Clone)]
 pub struct AppState {
-    pub kms_signer: Arc<AwsKmsSigner>,
+    pub kms_signer: Arc<dyn KmsSigner + Send + Sync>,
 }
 
 impl AppState {

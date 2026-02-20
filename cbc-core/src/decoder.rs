@@ -198,8 +198,22 @@ pub fn decode(data: &[u8], key: Option<[u8; 32]>) -> Result<DecodedArtifact> {
     let final_payload = if is_compressed {
         #[cfg(feature = "std")]
         {
-            zstd::decode_all(&raw_payload[..])
-                .map_err(|e| CbcError::DecompressionError(e.to_string()))?
+            use std::io::Read;
+            const MAX_SIZE: u64 = 256 * 1024 * 1024; // 256 MiB cap
+            let decoder = zstd::stream::read::Decoder::new(&raw_payload[..])
+                .map_err(|e| CbcError::DecompressionError(e.to_string()))?;
+            let mut decompressed = Vec::new();
+            decoder
+                .take(MAX_SIZE + 1)
+                .read_to_end(&mut decompressed)
+                .map_err(|e| CbcError::DecompressionError(e.to_string()))?;
+            
+            if decompressed.len() > MAX_SIZE as usize {
+                return Err(CbcError::DecompressionError(
+                    "Decompression exceeded 256 MiB limit (Zip-Bomb protection)".to_string(),
+                ));
+            }
+            decompressed
         }
         #[cfg(not(feature = "std"))]
         {

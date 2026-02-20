@@ -16,3 +16,5 @@ tokio = { version = "1.0", features = ["full"] }
 cbc-core = { path = "../cbc-core" }
 thiserror = "1.0"
 async-trait = "0.1"
+base64 = "0.22.1"
+serde_json = "1.0.149"

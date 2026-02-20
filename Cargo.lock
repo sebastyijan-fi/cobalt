@@ -818,8 +818,10 @@ dependencies = [
  "async-trait",
  "aws-config",
  "aws-sdk-kms",
+ "base64 0.22.1",
  "cbc-core",
  "reqwest",
+ "serde_json",
  "thiserror 1.0.69",
  "tokio",
 ]
@@ -847,13 +849,17 @@ dependencies = [
 name = "cbc-server"
 version = "0.1.0"
 dependencies = [
+ "async-trait",
  "axum",
+ "base64 0.22.1",
  "cbc-core",
  "cbc-kms",
  "cbc-transform",
+ "hex",
  "serde",
  "serde_json",
  "tokio",
+ "tower",
  "tower-http",
  "tracing",
  "tracing-subscriber",

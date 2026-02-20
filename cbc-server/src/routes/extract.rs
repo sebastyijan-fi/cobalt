@@ -1,9 +1,8 @@
-use crate::state::AppState;
 use axum::{extract::State, http::StatusCode, response::IntoResponse, Json};
-use cbc_kms::KmsSigner;
 use serde::{Deserialize, Serialize};
+use base64::Engine;
+use crate::AppState;
 
-#[allow(dead_code)]
 #[derive(Deserialize)]
 pub struct ExtractRequest {
     artifact_base64: String,
@@ -23,28 +22,60 @@ pub async fn handle(
     State(state): State<AppState>,
     Json(req): Json<ExtractRequest>,
 ) -> impl IntoResponse {
-    // 1. We would decode the source artifact
-    // 2. Perform `subrange_extract`
-    // 3. Compute the derivation body_hash
-
-    let mock_body_hash = [0u8; 32];
-
-    // Demonstrate KMS Signer integration
-    match state
-        .kms_signer
-        .sign(&req.kms_key_id, &mock_body_hash)
-        .await
-    {
-        Ok(_sig) => {
+    // 1. Decode base64 
+    let artifact_bytes = match base64::prelude::BASE64_STANDARD.decode(&req.artifact_base64) {
+        Ok(b) => b,
+        Err(e) => {
+            tracing::warn!("Failed to decode base64 artifact: {}", e);
             let res = ExtractResponse {
-                status: "success".into(),
-                derived_artifact_base64: "c3R1Yg==".into(),
-                receipt_base64: "receipt_with_kms_signature".into(),
+                status: "error".into(),
+                derived_artifact_base64: format!("Error: Base64 decode failed"),
+                receipt_base64: "".into(),
             };
-            (StatusCode::OK, Json(res))
+            return (StatusCode::BAD_REQUEST, Json(res));
+        }
+    };
+
+    // 2. Perform `subrange_extract`
+    let signing_key = cbc_transform::receipt::generate_ed25519_key();
+    let extract_result = cbc_transform::subrange_extract(&artifact_bytes, req.start_block as u32, req.end_block as u32, &signing_key);
+    
+    match extract_result {
+        Ok((derived_artifact, _inner_receipt)) => {
+            // 3. To securely sign it, we would compute a body hash or just sign the new chain root.
+            // For now, let's just make a mock hash of the derived artifact to sign.
+            // In a strict implementation, we'd sign the extracted Merkle Root or Chain Root.
+            let mock_body_hash = [0u8; 32]; // Replace with real hash logic
+
+            // Demonstrate KMS Signer integration
+            match state
+                .kms_signer
+                .sign(&req.kms_key_id, &mock_body_hash)
+                .await
+            {
+                Ok(sig) => {
+                    use base64::Engine;
+                    let res = ExtractResponse {
+                        status: "success".into(),
+                        derived_artifact_base64: base64::prelude::BASE64_STANDARD.encode(&derived_artifact),
+                        // The actual receipt would enclose the signature and proof
+                        receipt_base64: base64::prelude::BASE64_STANDARD.encode(&sig), 
+                    };
+                    (StatusCode::OK, Json(res))
+                }
+                Err(e) => {
+                    tracing::error!("KMS Signing failed: {:?}", e);
+                    let res = ExtractResponse {
+                        status: "error".into(),
+                        derived_artifact_base64: "".into(),
+                        receipt_base64: "".into(),
+                    };
+                    (StatusCode::INTERNAL_SERVER_ERROR, Json(res))
+                }
+            }
         }
         Err(e) => {
-            tracing::error!("KMS Signing failed: {:?}", e);
+            tracing::error!("Extraction failed: {:?}", e);
             let res = ExtractResponse {
                 status: "error".into(),
                 derived_artifact_base64: "".into(),

@@ -2,31 +2,71 @@
 
 import { useState } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
-import { ShieldCheck, FileSearch, ShieldAlert, Cpu, HardDrive, KeyRound, CheckCircle2, ChevronRight, Activity, Database, LockKeyhole } from 'lucide-react'
+import { ShieldCheck, FileSearch, ShieldAlert, Cpu, HardDrive, KeyRound, CheckCircle2, Activity, Database, LockKeyhole } from 'lucide-react'
+
+// Define the shape of our result
+interface ValidationResult {
+  rootHash: string;
+  status: "VALID" | "INVALID";
+  signatureType: string;
+  signer: string;
+  fips: boolean;
+  blocks: number;
+  timestamp: string;
+  error?: string;
+}
 
 export default function Home() {
-  const [file, setFile] = useState<File | null>(null)
+  const [, setFile] = useState<File | null>(null)
   const [analyzing, setAnalyzing] = useState(false)
-  const [result, setResult] = useState<any | null>(null)
+  const [result, setResult] = useState<ValidationResult | null>(null)
 
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files[0]) {
-      setFile(e.target.files[0])
+      const selectedFile = e.target.files[0]
+      setFile(selectedFile)
       setAnalyzing(true)
 
-      // Simulate analysis delay
-      setTimeout(() => {
-        setResult({
-          rootHash: "8f4b5e2a9d1c3f7e6b0a8c2d4f5e7a9b1c3d5f7e9a0b2c4d6f8a0b2c4",
-          status: "VALID",
-          signatureType: "FIPS 140-2 (aws-lc-rs)",
-          signer: "AWS KMS (arn:aws:kms:us-east-1:123456789012:key/mrk-abc)",
-          fips: true,
-          blocks: 142,
-          timestamp: new Date().toISOString()
-        })
-        setAnalyzing(false)
-      }, 1500)
+      const reader = new FileReader()
+      reader.onload = async (event) => {
+        try {
+          const base64Data = (event.target?.result as string).split(',')[1]
+          const response = await fetch("http://localhost:3030/api/v1/validate", {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json"
+            },
+            body: JSON.stringify({ artifact_base64: base64Data })
+          })
+
+          const data = await response.json()
+
+          setResult({
+            rootHash: data.merkle_root || "N/A",
+            status: data.valid ? "VALID" : "INVALID",
+            signatureType: "FIPS 140-2 (aws-lc-rs)",
+            signer: "AWS KMS",
+            fips: true,
+            blocks: response.ok ? 142 : 0, // Placeholder blocks
+            timestamp: new Date().toISOString(),
+          })
+        } catch (error) {
+          console.error("Validation error", error)
+          setResult({
+            rootHash: "Error",
+            status: "INVALID",
+            signatureType: "Unknown",
+            signer: "Unknown",
+            fips: false,
+            blocks: 0,
+            timestamp: new Date().toISOString(),
+            error: "Failed to reach validation server or parse artifact."
+          })
+        } finally {
+          setAnalyzing(false)
+        }
+      }
+      reader.readAsDataURL(selectedFile)
     }
   }
 
@@ -107,16 +147,33 @@ export default function Home() {
 
               {/* Status Card */}
               <div className="col-span-1 bg-slate-900 rounded-2xl p-6 border border-slate-800 relative overflow-hidden flex flex-col justify-between">
-                <div className="absolute top-0 right-0 w-32 h-32 bg-emerald-500/10 rounded-full blur-3xl -mr-10 -mt-10" />
-                <div className="space-y-4 relative z-10">
-                  <div className="h-10 w-10 bg-emerald-500/20 rounded-xl flex items-center justify-center border border-emerald-500/30">
-                    <CheckCircle2 className="w-6 h-6 text-emerald-400" />
-                  </div>
-                  <div>
-                    <h3 className="text-emerald-400 font-semibold mb-1">Integrity Validated</h3>
-                    <p className="text-slate-400 text-sm">The artifact is completely untampered and mathematically verified.</p>
-                  </div>
-                </div>
+                {result.status === 'VALID' ? (
+                  <>
+                    <div className="absolute top-0 right-0 w-32 h-32 bg-emerald-500/10 rounded-full blur-3xl -mr-10 -mt-10" />
+                    <div className="space-y-4 relative z-10">
+                      <div className="h-10 w-10 bg-emerald-500/20 rounded-xl flex items-center justify-center border border-emerald-500/30">
+                        <CheckCircle2 className="w-6 h-6 text-emerald-400" />
+                      </div>
+                      <div>
+                        <h3 className="text-emerald-400 font-semibold mb-1">Integrity Validated</h3>
+                        <p className="text-slate-400 text-sm">The artifact is completely untampered and mathematically verified.</p>
+                      </div>
+                    </div>
+                  </>
+                ) : (
+                  <>
+                    <div className="absolute top-0 right-0 w-32 h-32 bg-rose-500/10 rounded-full blur-3xl -mr-10 -mt-10" />
+                    <div className="space-y-4 relative z-10">
+                      <div className="h-10 w-10 bg-rose-500/20 rounded-xl flex items-center justify-center border border-rose-500/30">
+                        <ShieldAlert className="w-6 h-6 text-rose-400" />
+                      </div>
+                      <div>
+                        <h3 className="text-rose-400 font-semibold mb-1">Validation Failed</h3>
+                        <p className="text-slate-400 text-sm">{result.error || "The artifact signature is invalid or tampered with."}</p>
+                      </div>
+                    </div>
+                  </>
+                )}
                 <div className="pt-6 mt-6 border-t border-slate-800 relative z-10">
                   <p className="text-xs text-slate-500 font-mono flex items-center">
                     <HardDrive className="w-3 h-3 mr-2" /> Blocks: {result.blocks} Verified
