@@ -4,9 +4,9 @@
 /// Provides block boundary resynchronization and ambiguity rejection
 /// using self-delimiting prefix-free codes.
 use crate::error::{CbcError, Result};
+use alloc::format;
 use alloc::string::ToString;
 use alloc::vec::Vec;
-use alloc::format;
 
 /// Prefix code marker for block boundaries.
 /// We use a simple self-delimiting scheme:

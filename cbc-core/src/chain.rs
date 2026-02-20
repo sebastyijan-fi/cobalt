@@ -1,6 +1,4 @@
-/// Chain commitment logic (Family A).
-///
-/// Provides integrity and ordering guarantees by chaining block commitments.
+use crate::block::Block;
 use crate::hash::HashSuite;
 use alloc::vec::Vec;
 
@@ -11,23 +9,21 @@ pub fn compute_c0(params_canonical: &[u8; 40], nonce: &[u8; 16], suite: HashSuit
     suite.hash(&[b"CBC-v1", params_canonical.as_slice(), nonce.as_slice()])
 }
 
-/// Compute commitment cᵢ for block i.
+/// cᵢ = H("CBC-v1-block" || params_hash || header_bytes || padded_payload || cᵢ₋₁)
 ///
-/// cᵢ = H("CBC-v1-block" || params_hash || i_le64 || payloadᵢ || cᵢ₋₁)
-///
+/// `header_bytes` is the 16-byte encoded block header.
 /// `padded_payload` must be the zero-padded payload (full block_payload_size).
 pub fn compute_ci(
     params_hash: &[u8; 32],
-    index: u64,
+    header_bytes: &[u8; 16],
     padded_payload: &[u8],
     prev_commitment: &[u8; 32],
     suite: HashSuite,
 ) -> [u8; 32] {
-    let index_bytes = index.to_le_bytes();
     suite.hash(&[
         b"CBC-v1-block",
         params_hash.as_slice(),
-        &index_bytes,
+        header_bytes,
         padded_payload,
         prev_commitment.as_slice(),
     ])
@@ -45,15 +41,18 @@ pub fn compute_params_hash(params_canonical: &[u8; 40], suite: HashSuite) -> [u8
 pub fn compute_chain(
     params_canonical: &[u8; 40],
     nonce: &[u8; 16],
-    padded_payloads: &[Vec<u8>],
+    blocks: &[Block],
+    block_payload_size: u32,
     suite: HashSuite,
 ) -> (Vec<[u8; 32]>, [u8; 32]) {
     let params_hash = compute_params_hash(params_canonical, suite);
     let mut prev = compute_c0(params_canonical, nonce, suite);
-    let mut commitments = Vec::with_capacity(padded_payloads.len());
+    let mut commitments = Vec::with_capacity(blocks.len());
 
-    for (i, payload) in padded_payloads.iter().enumerate() {
-        let ci = compute_ci(&params_hash, i as u64, payload, &prev, suite);
+    for block in blocks {
+        let header_bytes = block.header.encode();
+        let padded = block.padded_payload(block_payload_size);
+        let ci = compute_ci(&params_hash, &header_bytes, &padded, &prev, suite);
         commitments.push(ci);
         prev = ci;
     }
@@ -71,16 +70,20 @@ pub fn compute_chain(
 pub fn verify_chain(
     params_canonical: &[u8; 40],
     nonce: &[u8; 16],
-    padded_payloads: &[Vec<u8>],
-    commitments: &[[u8; 32]],
+    blocks: &[Block],
+    block_payload_size: u32,
     suite: HashSuite,
 ) -> crate::error::Result<[u8; 32]> {
     let params_hash = compute_params_hash(params_canonical, suite);
     let mut prev = compute_c0(params_canonical, nonce, suite);
 
-    for (i, (payload, commitment)) in padded_payloads.iter().zip(commitments.iter()).enumerate() {
-        let expected = compute_ci(&params_hash, i as u64, payload, &prev, suite);
-        if expected != *commitment {
+    for (i, block) in blocks.iter().enumerate() {
+        let header_bytes = block.header.encode();
+        let padded = block.padded_payload(block_payload_size);
+        let expected = compute_ci(&params_hash, &header_bytes, &padded, &prev, suite);
+        // Constant-time comparison to prevent timing attacks
+        use subtle::ConstantTimeEq;
+        if expected.ct_eq(&block.commitment).unwrap_u8() == 0 {
             return Err(crate::error::CbcError::ChainCommitmentMismatch { index: i as u32 });
         }
         prev = expected;

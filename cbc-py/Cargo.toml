@@ -1,0 +1,18 @@
+[package]
+name = "cbc-py"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+keywords.workspace = true
+categories.workspace = true
+description = "Python bindings for Cobalt (CBC)"
+
+[lib]
+name = "cbc_py"
+crate-type = ["cdylib"]
+
+[dependencies]
+pyo3 = { version = "0.28", features = ["extension-module"] }
+cbc-core = { path = "../cbc-core", default-features = true }
+hex = "0.4"

@@ -1,6 +1,13 @@
 # Build artifacts
 /target/
 **/*.rs.bk
+debug.log
+
+# Temporary test/deploy check directories
+.tmp_deploy_check/
+
+# Audit bundle outputs (published via releases, not committed)
+audit-bundle/
 
 # IDE
 .idea/
@@ -22,7 +29,22 @@ cbc-core/fuzz/target/
 # Test artifacts
 /tmp/
 *.cbc
+!examples/**/*.cbc
 
 # Keys (never commit private keys)
 *.pem
 *.key
+*.pub
+
+# Node.js
+node_modules/
+npm-debug.log
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+.env
+
+# WASM
+/pkg/

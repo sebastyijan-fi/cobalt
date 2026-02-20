@@ -1,0 +1,368 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Cobalt | Sovereign Validator</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link
+        href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;800&family=JetBrains+Mono:wght@400;700&display=swap"
+        rel="stylesheet">
+    <style>
+        :root {
+            --bg: #0a0a0c;
+            --surface: #121217;
+            --primary: #4f46e5;
+            --success: #10b981;
+            --error: #ef4444;
+            --text: #f8fafc;
+            --text-dim: #94a3b8;
+            --border: #1e293b;
+        }
+
+        * {
+            box-sizing: border-box;
+        }
+
+        body {
+            background: var(--bg);
+            color: var(--text);
+            font-family: 'Inter', sans-serif;
+            margin: 0;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            min-height: 100vh;
+            padding: 2rem;
+        }
+
+        header {
+            text-align: center;
+            margin-bottom: 3rem;
+        }
+
+        h1 {
+            font-weight: 800;
+            font-size: 3rem;
+            margin: 0;
+            letter-spacing: -0.05em;
+            background: linear-gradient(135deg, #818cf8 0%, #c084fc 100%);
+            -webkit-background-clip: text;
+            background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+
+        p.subtitle {
+            color: var(--text-dim);
+            font-size: 1.1rem;
+            margin-top: 0.5rem;
+        }
+
+        #drop-zone {
+            width: 100%;
+            max-width: 800px;
+            height: 300px;
+            background: var(--surface);
+            border: 2px dashed var(--border);
+            border-radius: 24px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            cursor: pointer;
+            transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+            position: relative;
+            overflow: hidden;
+        }
+
+        #drop-zone:hover {
+            border-color: var(--primary);
+            background: #17171e;
+            transform: translateY(-4px);
+        }
+
+        #drop-zone.hover {
+            border-color: var(--primary);
+            background: rgba(79, 70, 229, 0.1);
+            box-shadow: 0 0 40px rgba(79, 70, 229, 0.2);
+        }
+
+        .drop-icon {
+            font-size: 3rem;
+            margin-bottom: 1rem;
+            opacity: 0.5;
+        }
+
+        .drop-text {
+            font-size: 1.25rem;
+            font-weight: 600;
+        }
+
+        .drop-subtext {
+            color: var(--text-dim);
+            margin-top: 0.5rem;
+        }
+
+        #results {
+            width: 100%;
+            max-width: 800px;
+            margin-top: 3rem;
+            display: none;
+            animation: slideUp 0.5s ease-out;
+        }
+
+        @keyframes slideUp {
+            from {
+                opacity: 0;
+                transform: translateY(20px);
+            }
+
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        .card {
+            background: var(--surface);
+            border-radius: 24px;
+            padding: 2rem;
+            border: 1px solid var(--border);
+            box-shadow: 0 20px 40px rgba(0, 0, 0, 0.3);
+        }
+
+        .status-header {
+            display: flex;
+            align-items: center;
+            gap: 1rem;
+            margin-bottom: 2rem;
+            padding-bottom: 1.5rem;
+            border-bottom: 1px solid var(--border);
+        }
+
+        .status-badge {
+            padding: 0.5rem 1.5rem;
+            border-radius: 999px;
+            font-weight: 800;
+            text-transform: uppercase;
+            letter-spacing: 0.1em;
+            font-size: 0.875rem;
+        }
+
+        .status-badge.valid {
+            background: rgba(16, 185, 129, 0.1);
+            color: var(--success);
+            border: 1px solid var(--success);
+        }
+
+        .status-badge.invalid {
+            background: rgba(239, 68, 68, 0.1);
+            color: var(--error);
+            border: 1px solid var(--error);
+        }
+
+        .grid {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 1.5rem;
+        }
+
+        .kv-pair {
+            background: var(--bg);
+            padding: 1rem;
+            border-radius: 12px;
+            border: 1px solid var(--border);
+        }
+
+        .kv-label {
+            font-size: 0.75rem;
+            color: var(--text-dim);
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            margin-bottom: 0.25rem;
+        }
+
+        .kv-value {
+            font-family: 'JetBrains Mono', monospace;
+            font-weight: 600;
+            font-size: 1rem;
+        }
+
+        .full-width {
+            grid-column: span 2;
+        }
+
+        .hash-value {
+            word-break: break-all;
+            font-size: 0.875rem;
+            color: #818cf8;
+        }
+
+        .suggestion-box {
+            margin-top: 2rem;
+            padding: 1.5rem;
+            border-radius: 16px;
+            background: rgba(79, 70, 229, 0.05);
+            border: 1px solid rgba(79, 70, 229, 0.2);
+        }
+
+        .suggestion-title {
+            font-weight: 600;
+            font-size: 0.875rem;
+            margin-bottom: 0.5rem;
+            color: #818cf8;
+            text-transform: uppercase;
+        }
+
+        .suggestion-text {
+            line-height: 1.6;
+            color: var(--text-dim);
+        }
+
+        .error-message {
+            color: var(--error);
+            font-weight: 600;
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.875rem;
+            margin-bottom: 0.5rem;
+        }
+
+        footer {
+            margin-top: auto;
+            padding: 4rem 0 2rem;
+            color: var(--text-dim);
+            font-size: 0.875rem;
+        }
+    </style>
+</head>
+
+<body>
+    <header>
+        <h1>Cobalt</h1>
+        <p class="subtitle">Sovereign-Grade Artifact Validator</p>
+    </header>
+
+    <div id="drop-zone">
+        <span class="drop-icon">🛡️</span>
+        <span class="drop-text">Verify Artifact</span>
+        <span class="drop-subtext">Drag & drop a .cbc file to start local verification</span>
+    </div>
+
+    <div id="results">
+        <div class="card">
+            <div class="status-header">
+                <div id="status-badge" class="status-badge">Verifying...</div>
+                <div id="file-name" style="font-weight: 600;">artifact.cbc</div>
+            </div>
+
+            <div class="grid">
+                <div class="kv-pair">
+                    <div class="kv-label">File Size</div>
+                    <div id="file-size" class="kv-value">-</div>
+                </div>
+                <div class="kv-pair">
+                    <div class="kv-label">Artifact Version</div>
+                    <div id="version" class="kv-value">-</div>
+                </div>
+                <div class="kv-pair">
+                    <div class="kv-label">Hash Suite</div>
+                    <div id="hash-suite" class="kv-value">-</div>
+                </div>
+                <div class="kv-pair">
+                    <div class="kv-label">Blocks</div>
+                    <div id="blocks" class="kv-value">-</div>
+                </div>
+                <div id="merkle-box" class="kv-pair full-width">
+                    <div class="kv-label">Merkle Root</div>
+                    <div id="merkle-root" class="kv-value hash-value">Calculating...</div>
+                </div>
+            </div>
+
+            <div id="error-section" style="display: none; margin-top: 2rem;">
+                <div class="error-message" id="error-text"></div>
+                <div class="suggestion-box">
+                    <div class="suggestion-title">Suggested Action</div>
+                    <div class="suggestion-text" id="suggestion-text"></div>
+                </div>
+            </div>
+
+            <div id="performance"
+                style="margin-top: 1.5rem; font-size: 0.75rem; color: var(--text-dim); text-align: right;">
+                Verification Time: <span id="verify-time">-</span>ms
+            </div>
+        </div>
+    </div>
+
+    <footer>
+        &copy; 2026 Cobalt Protocol &bull; Zero-Knowledge Local Verification
+    </footer>
+
+    <script type="module">
+        import init, { validate_artifact } from './pkg/cbc_wasm.js';
+
+        function formatBytes(bytes) {
+            if (bytes === 0) return '0 Bytes';
+            const k = 1024;
+            const sizes = ['Bytes', 'KB', 'MB', 'GB'];
+            const i = Math.floor(Math.log(bytes) / Math.log(k));
+            return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+        }
+
+        async function run() {
+            await init();
+
+            const dropZone = document.getElementById('drop-zone');
+            const results = document.getElementById('results');
+
+            dropZone.addEventListener('dragover', (e) => { e.preventDefault(); dropZone.classList.add('hover'); });
+            dropZone.addEventListener('dragleave', () => { dropZone.classList.remove('hover'); });
+
+            dropZone.addEventListener('drop', (e) => {
+                e.preventDefault();
+                dropZone.classList.remove('hover');
+                const file = e.dataTransfer.files[0];
+                if (!file) return;
+
+                document.getElementById('file-name').innerText = file.name;
+                results.style.display = 'block';
+                document.getElementById('status-badge').className = 'status-badge';
+                document.getElementById('status-badge').innerText = 'Verifying...';
+                document.getElementById('error-section').style.display = 'none';
+
+                const reader = new FileReader();
+                reader.onload = () => {
+                    const data = new Uint8Array(reader.result);
+                    const start = performance.now();
+                    const res = validate_artifact(data);
+                    const time = performance.now() - start;
+
+                    document.getElementById('file-size').innerText = formatBytes(res.file_size);
+                    document.getElementById('version').innerText = `v${res.version}`;
+                    document.getElementById('hash-suite').innerText = res.hash_suite;
+                    document.getElementById('blocks').innerText = res.block_count;
+                    document.getElementById('merkle-root').innerText = res.merkle_root || 'N/A';
+                    document.getElementById('verify-time').innerText = time.toFixed(2);
+
+                    const badge = document.getElementById('status-badge');
+                    if (res.valid) {
+                        badge.innerText = 'Valid';
+                        badge.classList.add('valid');
+                    } else {
+                        badge.innerText = 'Invalid';
+                        badge.classList.add('invalid');
+                        document.getElementById('error-section').style.display = 'block';
+                        document.getElementById('error-text').innerText = res.error;
+                        document.getElementById('suggestion-text').innerText = res.suggestion;
+                    }
+                };
+                reader.readAsArrayBuffer(file);
+            });
+        }
+
+        run();
+    </script>
+</body>
+
+</html>

@@ -1,0 +1,23 @@
+[package]
+name = "cbc-wasm"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+keywords.workspace = true
+categories.workspace = true
+description = "WebAssembly bindings for Cobalt (CBC) validation"
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+wasm-bindgen = "0.2"
+js-sys = "0.3"
+serde = { version = "1.0", features = ["derive"] }
+serde-wasm-bindgen = "0.4"
+cbc-core = { path = "../cbc-core", default-features = false, features = ["alloc"] }
+hex = "0.4"
+
+[dev-dependencies]
+wasm-bindgen-test = "0.3"

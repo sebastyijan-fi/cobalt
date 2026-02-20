@@ -1,0 +1,18 @@
+[package]
+name = "cbc-node"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+keywords.workspace = true
+categories.workspace = true
+description = "Node.js bindings for Cobalt (CBC)"
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+napi = { version = "2.12", features = ["napi4"] }
+napi-derive = "2.12"
+cbc-core = { path = "../cbc-core", default-features = true }
+hex = "0.4"

@@ -1,6 +1,7 @@
 /// Stream Footer — appears after the last block in a CBC artifact (§5.4).
 use crate::error::{CbcError, Result};
 use crate::hash::HashSuite;
+use alloc::format;
 use alloc::vec::Vec;
 
 /// Footer magic bytes: "CBCF" (0x43 0x42 0x43 0x46).
@@ -153,6 +154,14 @@ impl StreamFooter {
         ]);
         offset += 4;
 
+        // Security: Limit receipt count to prevent OOM via Vec::with_capacity.
+        // Even 64k receipts is extremely large for any reasonable use case.
+        if receipt_count > 65536 {
+            return Err(CbcError::msg(format!(
+                "receipt count too large: {receipt_count}"
+            )));
+        }
+
         // receipt_slots
         let mut receipt_slots = Vec::with_capacity(receipt_count as usize);
         for _ in 0..receipt_count {
@@ -202,18 +211,17 @@ impl StreamFooter {
         })
     }
 
-    /// Total encoded size of this footer.
-    pub fn encoded_size(&self) -> usize {
-        let mut size = 4 + 4 + 32; // magic + length + chain_root
+    /// Total encoded size of this footer. Returns None if overflow occurs.
+    pub fn encoded_size(&self) -> Option<usize> {
+        let mut size: usize = 4 + 4 + 32; // magic + length + chain_root
         if self.merkle_root.is_some() {
-            size += 32;
+            size = size.checked_add(32)?;
         }
-        size += 4; // receipt_count
+        size = size.checked_add(4)?; // receipt_count
         for receipt in &self.receipt_slots {
-            size += 4 + receipt.len(); // length prefix + data
+            size = size.checked_add(4)?.checked_add(receipt.len())?;
         }
-        size += FOOTER_COMMITMENT_SIZE;
-        size
+        size.checked_add(FOOTER_COMMITMENT_SIZE)
     }
 }
 

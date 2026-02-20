@@ -5,7 +5,12 @@
 //! - **SHA-256** (0x02) — widely deployed, NIST-approved
 
 use blake3;
+
+#[cfg(not(feature = "fips"))]
 use sha2::{Digest, Sha256};
+
+#[cfg(feature = "fips")]
+use aws_lc_rs::digest::{Context, SHA256};
 
 /// Hash algorithm identifier (§8.1).
 ///
@@ -43,14 +48,28 @@ impl HashSuite {
                 *hasher.finalize().as_bytes()
             }
             Self::Sha256 => {
-                let mut hasher = Sha256::new();
-                for part in parts {
-                    hasher.update(part);
+                #[cfg(not(feature = "fips"))]
+                {
+                    let mut hasher = Sha256::new();
+                    for part in parts {
+                        hasher.update(part);
+                    }
+                    let result = hasher.finalize();
+                    let mut out = [0u8; 32];
+                    out.copy_from_slice(&result);
+                    out
                 }
-                let result = hasher.finalize();
-                let mut out = [0u8; 32];
-                out.copy_from_slice(&result);
-                out
+                #[cfg(feature = "fips")]
+                {
+                    let mut ctx = Context::new(&SHA256);
+                    for part in parts {
+                        ctx.update(part);
+                    }
+                    let result = ctx.finish();
+                    let mut out = [0u8; 32];
+                    out.copy_from_slice(result.as_ref());
+                    out
+                }
             }
         }
     }

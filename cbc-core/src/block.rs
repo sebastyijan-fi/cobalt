@@ -1,16 +1,19 @@
 use crate::error::{CbcError, Result};
-use alloc::vec::Vec;
-use alloc::vec;
+use alloc::format;
 use alloc::string::ToString;
+use alloc::vec;
+use alloc::vec::Vec;
 
 /// Block header size in bytes.
 pub const BLOCK_HEADER_SIZE: usize = 16;
 /// Commitment size in bytes (32-byte hash output).
 pub const COMMITMENT_SIZE: usize = 32;
 
-/// Calculate total wire size of a single block.
-pub fn block_wire_size(block_payload_size: u32) -> usize {
-    BLOCK_HEADER_SIZE + block_payload_size as usize + COMMITMENT_SIZE
+/// Calculate total wire size of a single block. Returns None if overflow occurs.
+pub fn block_wire_size(block_payload_size: u32) -> Option<usize> {
+    BLOCK_HEADER_SIZE
+        .checked_add(block_payload_size as usize)?
+        .checked_add(COMMITMENT_SIZE)
 }
 
 /// Block header (16 bytes).
@@ -57,7 +60,8 @@ impl BlockHeader {
 impl Block {
     /// Encode a block to its wire format.
     pub fn encode(&self, block_payload_size: u32) -> Vec<u8> {
-        let wire_size = block_wire_size(block_payload_size);
+        let wire_size =
+            block_wire_size(block_payload_size).expect("block size too large for platform");
         let mut buf = vec![0u8; wire_size];
 
         buf[..BLOCK_HEADER_SIZE].copy_from_slice(&self.header.encode());
@@ -78,7 +82,11 @@ impl Block {
         expected_index: u32,
         is_last: bool,
     ) -> Result<Self> {
-        let wire_size = block_wire_size(block_payload_size);
+        let wire_size = block_wire_size(block_payload_size).ok_or_else(|| {
+            CbcError::msg(format!(
+                "block size {block_payload_size} too large for platform"
+            ))
+        })?;
         if bytes.len() < wire_size {
             return Err(CbcError::InsufficientData {
                 need: wire_size,
@@ -242,6 +250,29 @@ mod tests {
 
     #[test]
     fn test_block_wire_size() {
-        assert_eq!(block_wire_size(512), 512 + 32 + 16);
+        assert_eq!(block_wire_size(512).unwrap(), 512 + 32 + 16);
+    }
+
+    #[test]
+    fn test_block_encryption_tamper() {
+        let mut block = Block::new(0, b"SECRET".to_vec(), 32);
+        let key = [1u8; 32];
+        let nonce = [2u8; 16];
+
+        // Encrypt
+        block.encrypt(&key, &nonce, 32).unwrap();
+        // Decrypt (valid)
+        let mut block_valid = block.clone();
+        block_valid.decrypt(&key, &nonce, 32).unwrap();
+        assert_eq!(block_valid.payload, b"SECRET");
+
+        // Tamper ciphertext
+        let mut block_tampered = block.clone();
+        block_tampered.payload[0] ^= 0x01;
+
+        // Decrypt (invalid)
+        let result = block_tampered.decrypt(&key, &nonce, 32);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("decryption error"));
     }
 }

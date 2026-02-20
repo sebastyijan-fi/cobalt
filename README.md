@@ -15,7 +15,7 @@ A binary container format in which validity and meaning depend on intrinsic rela
 | **Structural robustness** | Self-delimiting prefix codes (Family C) enable resynchronization after corruption |
 | **Tamper evidence** | Any modification — bit flip, reorder, truncate — invalidates the root |
 | **Provenance** | Copying produces a different root; transform receipts link old → new with signatures |
-| **Use Cases** | See [USE_CASES.md](USE_CASES.md) for 10 real-world scenarios |
+| **Use Cases** | See [docs/USE_CASES.md](docs/USE_CASES.md) for 10 real-world scenarios |
 
 ## Quick Start
 
@@ -38,6 +38,9 @@ cargo run -p cbc-cli -- inspect -i myfile.cbc
 # Decode (extract payload)
 cargo run -p cbc-cli -- decode -i myfile.cbc -o recovered.pdf
 
+# Decode to stdout (cat)
+cargo run -p cbc-cli -- cat -i myfile.cbc > recovered.pdf
+
 # Streaming encode (constant memory)
 cargo run -p cbc-cli -- stream-encode -i largefile.bin -o largefile.cbc --families A+B
 
@@ -47,9 +50,9 @@ cargo run -p cbc-cli -- prove -i myfile.cbc --start 0 --end 3 -o proof.bin
 # Verify a range proof
 cargo run -p cbc-cli -- verify-proof -i myfile.cbc -p proof.bin
 
-# Transform with receipt (requires signing key)
+# Transform/Extract with receipt (requires signing key)
 cargo run -p cbc-cli -- keygen -o mykey --alg ed25519
-cargo run -p cbc-cli -- transform -t subrange -i myfile.cbc -o subset.cbc -k mykey --start 0 --end 3
+cargo run -p cbc-cli -- extract -i myfile.cbc -o subset.cbc -k mykey --start 0 --end 3
 ```
 
 ## Architecture
@@ -69,10 +72,23 @@ cobalt/
 ├── cbc-transform/     Transform & receipt library
 │   ├── transforms.rs  Truncate, rechunk, recompress, concat, subrange
 │   └── receipt.rs     ECDSA P-256 + Ed25519 signing/verification (§6)
-└── cbc-cli/           Command-line interface
-    └── main.rs        encode, decode, validate, inspect, transform, keygen,
-                       prove, verify-proof, stream-encode
+├── cbc-cli/           Command-line interface
+├── cbc-kms/           Cloud KMS Integration (AWS KMS & HashiCorp Vault)
+├── cbc-server/        Enterprise REST API Server
+├── cobalt-ui/         Audit Tracker Web Dashboard
+├── cbc-py/            Python Bindings
+├── cbc-node/          Node.js Bindings
+└── cbc-wasm/          WASM Web Bindings
 ```
+
+## Enterprise Features
+
+Cobalt is designed for enterprise deployment, featuring:
+
+- **Cloud KMS Integrations**: Native support for AES-GCM and RSA encryption/signing wrapped via AWS KMS and HashiCorp Vault (`cbc-kms`).
+- **REST API Server**: High-performance HTTP endpoints for container processing, encoding, decoding, and validation, suitable for microservice architectures (`cbc-server`).
+- **Audit Tracker UI**: A dashboard for provenance tracking, monitoring KMS-bound cryptographc operations, and visualizing artifact derivations (`cobalt-ui`).
+- **Language Bindings**: Cross-platform libraries natively binding the Rust core to Python (`cbc-py`), Node.js (`cbc-node`), and the Browser (`cbc-wasm`).
 
 ## API Usage
 

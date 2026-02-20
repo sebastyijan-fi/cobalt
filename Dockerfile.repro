@@ -1,0 +1,29 @@
+# Reproducible Build Container for Cobalt (CBC)
+# usage: docker build -t cbc-repro -f Dockerfile.repro .
+#        docker run --rm -v $(pwd):/dist cbc-repro
+
+FROM rust:1.81-alpine3.20 AS builder
+
+# Install build dependencies
+RUN apk add --no-cache musl-dev gcc
+
+# Create a deterministic build environment
+ENV CARGO_HOME=/usr/local/cargo
+ENV RUSTFLAGS="-C strip=symbols -C codegen-units=1"
+# Set SOURCE_DATE_EPOCH for reproducibility (if supported by tooling)
+ENV SOURCE_DATE_EPOCH=1700000000
+
+WORKDIR /app
+
+# Copy source code
+COPY . .
+
+# Build release binary
+# --locked ensures Cargo.lock is respected exactly
+RUN cargo build --release --locked --bin cbc
+
+# Calculate checksum of the binary inside container
+RUN sha256sum target/release/cbc
+
+# Entrypoint to copy binary to host
+CMD ["sh", "-c", "cp target/release/cbc /dist/cbc-linux-amd64 && sha256sum /dist/cbc-linux-amd64"]

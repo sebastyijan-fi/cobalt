@@ -5,8 +5,8 @@
 //! against the public root commitment.
 
 use cbc_core::bootstrap::{FAMILY_A_BIT, FAMILY_B_BIT};
-use cbc_core::{decoder, encoder, EncoderConfig, HashSuite, merkle::MerkleTree};
 use cbc_core::chain;
+use cbc_core::{decoder, encoder, merkle::MerkleTree, EncoderConfig, HashSuite};
 
 fn main() {
     let payload = vec![0u8; 2000]; // 2000 bytes ensures ~4 blocks with 512-byte size
@@ -15,7 +15,7 @@ fn main() {
     let config = EncoderConfig {
         hash_suite: HashSuite::Blake3,
         commitment_mode: FAMILY_A_BIT | FAMILY_B_BIT, // Family B enables Merkle range proofs; Family A is mandatory
-        block_payload_size: 512,        // 512 bytes is the minimum allowed block size
+        block_payload_size: 512,                      // 512 bytes is the minimum allowed block size
         flags: 0,
         encryption_key: None,
     };
@@ -27,18 +27,23 @@ fn main() {
     // 2. Decode to access the Merkle Root
     println!("\n--- Step 2: Extracting Merkle Root ---");
     let decoded = decoder::decode(&artifact, None).unwrap();
-    let root = decoded.merkle_root.expect("Merkle Root missing (Family B not enabled)");
+    let root = decoded
+        .merkle_root
+        .expect("Merkle Root missing (Family B not enabled)");
     println!("Merkle Root: {}", hex::encode(root));
     println!("Total blocks: {}", decoded.block_count);
 
     // 3. To generate a proof, we need the padded payloads (internal library logic simulation)
     println!("\n--- Step 3: Generating range proof for blocks 1 to 2 ---");
     let bps = config.block_payload_size as usize;
-    let padded_payloads: Vec<Vec<u8>> = payload.chunks(bps).map(|chunk| {
-        let mut p = chunk.to_vec();
-        p.resize(bps, 0);
-        p
-    }).collect();
+    let padded_payloads: Vec<Vec<u8>> = payload
+        .chunks(bps)
+        .map(|chunk| {
+            let mut p = chunk.to_vec();
+            p.resize(bps, 0);
+            p
+        })
+        .collect();
 
     let params_canonical = decoded.bootstrap.params_canonical();
     let params_hash = chain::compute_params_hash(&params_canonical, config.hash_suite);

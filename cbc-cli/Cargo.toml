@@ -8,6 +8,17 @@ keywords.workspace = true
 categories.workspace = true
 description = "CLI tool for CBC (Context-Bound Container) v0.1 — encode, decode, validate, transform"
 
+
+[features]
+default = ["zstd"]
+zstd = ["cbc-core/zstd"]
+
+
+[build-dependencies]
+clap = { version = "4", features = ["derive"] }
+clap_mangen = "0.2"
+serde = { version = "1.0", features = ["derive"] }
+
 [[bin]]
 name = "cbc"
 path = "src/main.rs"
@@ -20,3 +31,13 @@ hex = "0.4"
 rand = "0.8"
 p256 = { version = "0.13", features = ["ecdsa"] }
 ed25519-dalek = { version = "2", features = ["rand_core"] }
+serde = { version = "1.0.228", features = ["derive"] }
+serde_json = "1.0.149"
+clap_complete = "4.5.66"
+indicatif = "0.17"
+tar = "0.4"
+owo-colors = "4.0"
+human-panic = "2.0"
+anyhow = "1.0"
+toml = "0.8"
+notify = "6.1"

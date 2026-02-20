@@ -25,25 +25,30 @@ fn main() {
     println!("--- Step 1: Streaming Encoding ---");
     let nonce = [0u8; 16]; // Use a fixed nonce for deterministic output
     let mut encoder = StreamingEncoder::new(&config, nonce);
+    let mut artifact = Vec::new();
 
-    // Emulating writing chunks
-    encoder.write_payload(chunk_1).unwrap();
-    encoder.write_payload(chunk_2).unwrap();
-    encoder.write_payload(chunk_3).unwrap();
-    
+    // Emulating writing chunks - we capture blocks as they are emitted
+    artifact.extend(encoder.feed(chunk_1).unwrap().concat());
+    artifact.extend(encoder.feed(chunk_2).unwrap().concat());
+    artifact.extend(encoder.feed(chunk_3).unwrap().concat());
+
     // Add more data to ensure we actually have multiple 512-byte blocks
     let large_data = vec![0x42u8; 1000];
-    encoder.write_payload(&large_data).unwrap();
+    artifact.extend(encoder.feed(&large_data).unwrap().concat());
 
-    let artifact = encoder.finalize(&[]).unwrap();
-    println!("Encoded {} bytes into artifact of {} bytes", 
-             chunk_1.len() + chunk_2.len() + chunk_3.len() + large_data.len(), 
-             artifact.len());
+    let (final_blocks, _) = encoder.finalize(&[]).unwrap();
+    artifact.extend(final_blocks);
+
+    println!(
+        "Encoded {} bytes into artifact of {} bytes",
+        chunk_1.len() + chunk_2.len() + chunk_3.len() + large_data.len(),
+        artifact.len()
+    );
 
     // 2. Streaming Decoding
     println!("\n--- Step 2: Streaming Decoding ---");
     let mut decoder = StreamingDecoder::new(None);
-    
+
     // In a real scenario, we would read the bootstrap header (first 64 bytes) first
     let bootstrap_bytes = &artifact[..64];
     decoder.feed_bootstrap(bootstrap_bytes).unwrap();
@@ -59,16 +64,19 @@ fn main() {
 
     for i in 0..block_count {
         let is_last = i == block_count - 1;
-        
+
         let current_block_size = full_block_size;
         let block_bytes = &artifact[offset..offset + current_block_size];
-        
+
         // feed_block returns the plaintext chunk of this specific block
         let chunk = decoder.feed_block(block_bytes, is_last).unwrap();
         recovered_payload.extend_from_slice(&chunk);
-        
+
         offset += current_block_size;
-        println!("  Decoded block {} at offset {}, size {}", i, offset, current_block_size);
+        println!(
+            "  Decoded block {} at offset {}, size {}",
+            i, offset, current_block_size
+        );
     }
 
     // Finally, feed the footer
@@ -77,7 +85,13 @@ fn main() {
 
     println!("\n✓ Recovered payload length: {} bytes", full_payload.len());
     println!("Payload string: {}", String::from_utf8_lossy(&full_payload));
-    
-    let expected = [chunk_1.to_vec(), chunk_2.to_vec(), chunk_3.to_vec(), large_data].concat();
+
+    let expected = [
+        chunk_1.to_vec(),
+        chunk_2.to_vec(),
+        chunk_3.to_vec(),
+        large_data,
+    ]
+    .concat();
     assert_eq!(full_payload, expected);
 }

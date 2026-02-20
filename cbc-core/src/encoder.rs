@@ -1,14 +1,15 @@
-use crate::error::{CbcError, Result};
 use crate::block::Block;
 use crate::bootstrap::{BootstrapSegment, FAMILY_A_BIT, FAMILY_B_BIT, FAMILY_C_BIT};
 use crate::chain;
-use crate::merkle::MerkleTree;
-use crate::prefix;
+use crate::error::{CbcError, Result};
 use crate::footer::StreamFooter;
 use crate::hash::HashSuite;
-use alloc::vec::Vec;
-use alloc::vec;
+use crate::merkle::MerkleTree;
+use crate::prefix;
+use alloc::format;
 use alloc::string::ToString;
+use alloc::vec;
+use alloc::vec::Vec;
 
 /// Configuration for encoding a CBC artifact.
 #[derive(Debug, Clone)]
@@ -41,8 +42,18 @@ pub fn encode(
     receipts: &[Vec<u8>],
 ) -> Result<Vec<u8>> {
     let block_payload_size = config.block_payload_size;
+    if block_payload_size == 0 {
+        return Err(CbcError::InvalidBlockPayloadSize(0));
+    }
     let is_compressed = config.flags & crate::bootstrap::FLAG_COMPRESSED != 0;
     let is_encrypted = config.flags & crate::bootstrap::FLAG_ENCRYPTED != 0;
+
+    if is_encrypted && block_payload_size < 16 {
+        return Err(CbcError::msg(format!(
+            "block_payload_size ({block_payload_size}) must be at least 16 bytes when encryption is enabled"
+        )));
+    }
+
     let effective_bps = if is_encrypted {
         block_payload_size - 16 // 16 bytes for AES-GCM tag
     } else {
@@ -57,7 +68,9 @@ pub fn encode(
         }
         #[cfg(not(feature = "std"))]
         {
-            return Err(CbcError::CompressionError("Compression not supported in no_std builds".to_string()));
+            return Err(CbcError::CompressionError(
+                "Compression not supported in no_std builds".to_string(),
+            ));
         }
     } else {
         payload.to_vec()
@@ -82,7 +95,9 @@ pub fn encode(
     let mut blocks: Vec<Block> = chunks
         .iter()
         .enumerate()
-        .map(|(i, chunk): (usize, &Vec<u8>)| Block::new(i as u32, chunk.clone(), block_payload_size))
+        .map(|(i, chunk): (usize, &Vec<u8>)| {
+            Block::new(i as u32, chunk.clone(), block_payload_size)
+        })
         .collect();
 
     if is_encrypted {
@@ -90,7 +105,7 @@ pub fn encode(
             .encryption_key
             .as_ref()
             .ok_or(CbcError::MissingEncryptionKey)?;
-        
+
         for block in &mut blocks {
             block.encrypt(key, &nonce, block_payload_size)?;
         }
@@ -105,7 +120,8 @@ pub fn encode(
     let (commitments, chain_root) = chain::compute_chain(
         &params_canonical,
         &nonce,
-        &padded_payloads,
+        &blocks,
+        block_payload_size,
         config.hash_suite,
     );
 

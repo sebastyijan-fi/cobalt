@@ -12,6 +12,9 @@ pub enum TransformError {
     #[error("signing error: {0}")]
     SigningError(String),
 
+    #[error("receipt generation error: {0}")]
+    ReceiptGenerationError(String),
+
     #[error("verification error: {0}")]
     VerificationError(String),
 

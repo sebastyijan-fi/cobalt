@@ -97,7 +97,7 @@ fn test_n2_truncate_without_footer_update() {
     let (artifact, _) = make_test_artifact();
 
     // Remove the second block (it's at offset bootstrap_size + block_wire_size)
-    let block_wire = cbc_core::block::block_wire_size(512);
+    let block_wire = cbc_core::block::block_wire_size(512).unwrap();
     let end_of_first_block = BOOTSTRAP_SIZE + block_wire;
 
     // Take bootstrap + first block + footer (skip second block)
@@ -131,7 +131,7 @@ fn test_n3_swap_blocks() {
     payload_varied[1024] = 0x44;
 
     let artifact = encoder::encode(&config, &payload_varied, [7u8; 16], &[]).unwrap();
-    let block_wire = cbc_core::block::block_wire_size(512);
+    let block_wire = cbc_core::block::block_wire_size(512).unwrap();
 
     // Swap block 0 and block 1
     let mut swapped = artifact.clone();
@@ -163,7 +163,7 @@ fn test_n4_footer_substitution() {
     let artifact_a = encoder::encode(&config, &vec![0x41u8; 512], [1u8; 16], &[]).unwrap();
     let artifact_b = encoder::encode(&config, &vec![0x42u8; 512], [2u8; 16], &[]).unwrap();
 
-    let block_wire = cbc_core::block::block_wire_size(512);
+    let block_wire = cbc_core::block::block_wire_size(512).unwrap();
     let footer_start = BOOTSTRAP_SIZE + block_wire;
 
     // Take A's bootstrap + blocks, but B's footer
@@ -190,7 +190,7 @@ fn test_n5_subrange_as_complete() {
 
     // Try to present blocks 0-1 as a complete 4-block artifact
     // by copying bootstrap + 2 blocks + footer
-    let block_wire = cbc_core::block::block_wire_size(512);
+    let block_wire = cbc_core::block::block_wire_size(512).unwrap();
     let two_blocks_end = BOOTSTRAP_SIZE + 2 * block_wire;
     let footer_start = BOOTSTRAP_SIZE + 4 * block_wire;
 

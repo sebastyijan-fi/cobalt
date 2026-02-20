@@ -13,18 +13,19 @@ fuzz_target!(|data: &[u8]| {
     }
 
     // Strategy 1: Random bytes (from fuzzer directly)
-    let _ = decoder::decode(data);
+    let _ = decoder::decode(data, None);
 
     // Strategy 2: Mutate a valid artifact
     // Use first few bytes of fuzz data to determine config
     let suite = if data[0] % 2 == 0 { HashSuite::Blake3 } else { HashSuite::Sha256 };
-    let block_size = 64 + (data[1] as u32 % 1024);
+    let block_size = 64 + (data[1] as u32 % 1024).next_power_of_two().max(512);
     
     let config = EncoderConfig {
         hash_suite: suite,
         commitment_mode: FAMILY_A_BIT,
         block_payload_size: block_size,
         flags: 0,
+        encryption_key: None,
     };
 
     let payload = &data[2..];
@@ -42,6 +43,6 @@ fuzz_target!(|data: &[u8]| {
             mutated[bit_idx] ^= 1 << (data[6] % 8);
         }
 
-        let _ = decoder::decode(&mutated);
+        let _ = decoder::decode(&mutated, None);
     }
 });

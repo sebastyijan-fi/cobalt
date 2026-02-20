@@ -36,6 +36,7 @@ pub mod block;
 pub mod bootstrap;
 pub mod chain;
 pub mod decoder;
+pub mod easy;
 pub mod encoder;
 pub mod error;
 pub mod footer;

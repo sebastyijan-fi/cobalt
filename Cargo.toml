@@ -3,7 +3,7 @@ resolver = "2"
 members = [
     "cbc-core",
     "cbc-transform",
-    "cbc-cli",
+    "cbc-cli", "cbc-wasm", "cbc-py", "cbc-node", "cbc-kms", "cbc-server",
 ]
 exclude = [
     "cbc-core/fuzz",

@@ -2,8 +2,8 @@
 ///
 /// Merkle Tree (Family B) — provides O(log n) range proofs for selective disclosure.
 use crate::hash::HashSuite;
-use alloc::vec::Vec;
 use alloc::vec;
+use alloc::vec::Vec;
 
 /// Compute a Merkle leaf hash.
 ///
@@ -69,8 +69,21 @@ impl MerkleTree {
             .map(|(i, payload)| compute_leaf(params_hash, i as u64, payload, suite))
             .collect();
 
+        Self::build_from_leaves(&leaves, suite)
+    }
+
+    /// Build a Merkle tree from pre-computed leaf hashes.
+    pub fn build_from_leaves(leaves: &[[u8; 32]], suite: HashSuite) -> Self {
         let leaf_count = leaves.len();
-        let mut levels: Vec<Vec<[u8; 32]>> = vec![leaves];
+        if leaf_count == 0 {
+            return Self {
+                nodes: vec![],
+                root: [0u8; 32],
+                leaf_count: 0,
+            };
+        }
+
+        let mut levels: Vec<Vec<[u8; 32]>> = vec![leaves.to_vec()];
 
         // Build tree bottom-up
         while levels.last().unwrap().len() > 1 {
@@ -150,7 +163,9 @@ impl MerkleTree {
             idx /= 2;
         }
 
-        current == *root
+        // Constant-time comparison
+        use subtle::ConstantTimeEq;
+        current.ct_eq(root).unwrap_u8() == 1
     }
 
     /// Get the leaf hashes (for optional footer storage).
@@ -342,6 +357,14 @@ impl RangeProof {
         let end = u32::from_le_bytes([data[4], data[5], data[6], data[7]]) as usize;
         let leaf_count = u32::from_le_bytes([data[8], data[9], data[10], data[11]]) as usize;
         let node_count = u32::from_le_bytes([data[12], data[13], data[14], data[15]]) as usize;
+
+        // CAPACITY BOMB MITIGATION:
+        // 1. Check if node_count is within a reasonable upper bound for a binary tree (e.g., 1024).
+        // 2. Check if the remaining data is sufficient to contain 'node_count' nodes.
+        // Each node is exactly 39 bytes on the wire.
+        if node_count > 1024 || 16 + (node_count * 39) > data.len() {
+            return None;
+        }
 
         let mut offset = 16;
         let mut proof_nodes = Vec::with_capacity(node_count);

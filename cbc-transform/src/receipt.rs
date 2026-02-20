@@ -281,6 +281,7 @@ impl SigningKey {
 }
 
 /// Create and sign a receipt for a transform.
+#[allow(clippy::too_many_arguments)]
 pub fn create_receipt(
     source_root: [u8; 32],
     source_merkle_root: [u8; 32],
@@ -313,6 +314,49 @@ pub fn create_receipt(
     // Now body_hash is computed with signer_id populated
     let body_hash = receipt.body_hash(hash_suite);
     let sig_bytes = signing_key.sign_hash(&body_hash)?;
+    receipt.sig_bytes = sig_bytes;
+
+    Ok(receipt)
+}
+
+/// Create and sign a receipt for a transform using an enterprise KMS.
+#[allow(clippy::too_many_arguments)]
+pub async fn create_kms_receipt(
+    source_root: [u8; 32],
+    source_merkle_root: [u8; 32],
+    derived_root: [u8; 32],
+    derived_merkle_root: [u8; 32],
+    transform_type: TransformType,
+    transform_desc: Vec<u8>,
+    timestamp: u64,
+    kms_signer: &dyn cbc_kms::KmsSigner,
+    key_id: &str,
+    signer_public_key: Vec<u8>,
+    sig_alg: SigAlgorithm,
+    hash_suite: cbc_core::HashSuite,
+) -> Result<Receipt> {
+    let mut receipt = Receipt {
+        receipt_version: 0x0001,
+        sig_alg,
+        source_root,
+        source_merkle_root,
+        derived_root,
+        derived_merkle_root,
+        timestamp,
+        transform_type,
+        transform_desc,
+        signer_id: signer_public_key,
+        sig_bytes: Vec::new(),
+    };
+
+    let body_hash = receipt.body_hash(hash_suite);
+
+    // Call the KMS to sign the hash
+    let sig_bytes = kms_signer
+        .sign(key_id, &body_hash)
+        .await
+        .map_err(|e| TransformError::ReceiptGenerationError(format!("KMS sign failed: {}", e)))?;
+
     receipt.sig_bytes = sig_bytes;
 
     Ok(receipt)

@@ -15,9 +15,9 @@ use crate::error::{CbcError, Result};
 use crate::footer::StreamFooter;
 use crate::merkle;
 use crate::prefix;
-use alloc::vec::Vec;
-use alloc::string::ToString;
 use alloc::format;
+use alloc::string::ToString;
+use alloc::vec::Vec;
 
 /// Result of a successful decode.
 #[derive(Debug)]
@@ -48,6 +48,9 @@ pub fn decode(data: &[u8], key: Option<[u8; 32]>) -> Result<DecodedArtifact> {
 
     let block_payload_size = bootstrap.block_payload_size;
     let block_count = bootstrap.block_count;
+    if block_count == 0 {
+        return Err(CbcError::msg("artifact must contain at least 1 block"));
+    }
     let suite = bootstrap.hash_suite;
     let params_canonical = bootstrap.params_canonical();
     let params_hash = chain::compute_params_hash(&params_canonical, suite);
@@ -61,12 +64,27 @@ pub fn decode(data: &[u8], key: Option<[u8; 32]>) -> Result<DecodedArtifact> {
         0
     };
 
-    let wire_size = block_wire_size(block_payload_size);
-    let block_total_size = prefix_size + wire_size;
+    let wire_size = block_wire_size(block_payload_size).ok_or_else(|| {
+        CbcError::msg(format!(
+            "block size {block_payload_size} too large for platform"
+        ))
+    })?;
+    let block_total_size = prefix_size
+        .checked_add(wire_size)
+        .ok_or_else(|| CbcError::msg("total block size too large for platform"))?;
 
     // Check we have enough data for all blocks
+    // Check we have enough data for all blocks
     let blocks_start = BOOTSTRAP_SIZE;
-    let blocks_end = blocks_start + (block_count as usize) * block_total_size;
+
+    // Use checked arithmetic to prevent integer overflow (The Overflow Void)
+    let blocks_end = (block_count as usize)
+        .checked_mul(block_total_size)
+        .and_then(|total| total.checked_add(blocks_start))
+        .ok_or(CbcError::InsufficientData {
+            need: usize::MAX,
+            have: data.len(),
+        })?;
 
     if data.len() < blocks_end {
         return Err(CbcError::InsufficientData {
@@ -116,14 +134,17 @@ pub fn decode(data: &[u8], key: Option<[u8; 32]>) -> Result<DecodedArtifact> {
         .collect();
 
     // 3. Verify chain commitments (Family A)
-    let commitments: Vec<[u8; 32]> = blocks.iter().map(|b| b.commitment).collect();
-    let chain_root = chain::verify_chain(
+    let _chain_root = chain::verify_chain(
         &params_canonical,
         &bootstrap.bootstrap_nonce,
-        &padded_payloads,
-        &commitments,
+        &blocks,
+        block_payload_size,
         suite,
     )?;
+    let chain_root = blocks
+        .last()
+        .map(|b| b.commitment)
+        .unwrap_or_else(|| chain::compute_c0(&params_canonical, &bootstrap.bootstrap_nonce, suite));
 
     // 4. Verify Merkle root (Family B)
     let merkle_root = if has_merkle {
@@ -136,6 +157,17 @@ pub fn decode(data: &[u8], key: Option<[u8; 32]>) -> Result<DecodedArtifact> {
     // 5. Parse and verify footer
     let footer_data = &data[offset..];
     let footer = StreamFooter::decode(footer_data, has_merkle, &params_hash, suite)?;
+
+    // Security: Enforce canonical file length to prevent slack-space steganography
+    let expected_footer_size = footer
+        .encoded_size()
+        .ok_or_else(|| CbcError::msg("footer size too large for platform"))?;
+    if footer_data.len() != expected_footer_size {
+        return Err(CbcError::msg(format!(
+            "trailing garbage detected: {} bytes extra",
+            footer_data.len() - expected_footer_size
+        )));
+    }
 
     // 6. Verify chain root matches footer
     if footer.chain_root != chain_root {
@@ -152,7 +184,7 @@ pub fn decode(data: &[u8], key: Option<[u8; 32]>) -> Result<DecodedArtifact> {
     // 7. Extract payload (concatenate all block payloads)
     let is_encrypted = bootstrap.flags & crate::bootstrap::FLAG_ENCRYPTED != 0;
     let is_compressed = bootstrap.flags & crate::bootstrap::FLAG_COMPRESSED != 0;
-    
+
     let mut raw_payload = Vec::new();
     for mut block in blocks {
         if is_encrypted {
@@ -166,11 +198,14 @@ pub fn decode(data: &[u8], key: Option<[u8; 32]>) -> Result<DecodedArtifact> {
     let final_payload = if is_compressed {
         #[cfg(feature = "std")]
         {
-            zstd::decode_all(&raw_payload[..]).map_err(|e| CbcError::DecompressionError(e.to_string()))?
+            zstd::decode_all(&raw_payload[..])
+                .map_err(|e| CbcError::DecompressionError(e.to_string()))?
         }
         #[cfg(not(feature = "std"))]
         {
-            return Err(CbcError::DecompressionError("Decompression not supported in no_std builds".to_string()));
+            return Err(CbcError::DecompressionError(
+                "Decompression not supported in no_std builds".to_string(),
+            ));
         }
     } else {
         raw_payload
@@ -188,17 +223,158 @@ pub fn decode(data: &[u8], key: Option<[u8; 32]>) -> Result<DecodedArtifact> {
 
 /// Validate a CBC artifact without extracting payload.
 /// Returns Ok(()) if valid.
+///
+/// This function is optimized to check integrity (hashes, CRCs, signatures)
+/// without performing expensive decompression or decryption.
 pub fn validate(data: &[u8]) -> Result<()> {
-    decode(data, None).map(|_| ())
+    // 1. Parse and verify bootstrap segment (params_mac)
+    if data.len() < BOOTSTRAP_SIZE {
+        return Err(CbcError::InsufficientData {
+            need: BOOTSTRAP_SIZE,
+            have: data.len(),
+        });
+    }
+
+    let mut bootstrap_bytes = [0u8; BOOTSTRAP_SIZE];
+    bootstrap_bytes.copy_from_slice(&data[..BOOTSTRAP_SIZE]);
+    let bootstrap = BootstrapSegment::decode(&bootstrap_bytes)?;
+
+    let block_payload_size = bootstrap.block_payload_size;
+    let block_count = bootstrap.block_count;
+    let suite = bootstrap.hash_suite;
+    let params_canonical = bootstrap.params_canonical();
+    let params_hash = chain::compute_params_hash(&params_canonical, suite);
+    let has_merkle = bootstrap.family_b();
+    let has_prefix = bootstrap.family_c();
+
+    // Determine prefix marker size (if Family C)
+    let prefix_size = if has_prefix {
+        prefix::prefix_marker_size(block_payload_size)
+    } else {
+        0
+    };
+
+    let wire_size = block_wire_size(block_payload_size).ok_or_else(|| {
+        CbcError::msg(format!(
+            "block size {block_payload_size} too large for platform"
+        ))
+    })?;
+    let block_total_size = prefix_size
+        .checked_add(wire_size)
+        .ok_or_else(|| CbcError::msg("total block size too large for platform"))?;
+
+    // Check we have enough data for all blocks
+    let blocks_start = BOOTSTRAP_SIZE;
+    let blocks_end = (block_count as usize)
+        .checked_mul(block_total_size)
+        .and_then(|total| total.checked_add(blocks_start))
+        .ok_or_else(|| CbcError::msg("artifact size too large for platform"))?;
+
+    if data.len() < blocks_end {
+        return Err(CbcError::InsufficientData {
+            need: blocks_end,
+            have: data.len(),
+        });
+    }
+
+    // 2. Parse all blocks (without decrypting/extracting payload)
+    let mut offset = blocks_start;
+    let mut blocks = Vec::with_capacity(block_count as usize);
+
+    for i in 0..block_count {
+        let is_last = i == block_count - 1;
+
+        // Family C prefix check
+        if has_prefix {
+            let marker_data = &data[offset..];
+            let (block_type, payload_size, consumed) = prefix::decode_prefix_marker(marker_data)?;
+            if block_type != prefix::BLOCK_TYPE_DATA {
+                return Err(CbcError::PrefixParseError(format!(
+                    "block {i}: unexpected block type 0x{block_type:02x}"
+                )));
+            }
+            if payload_size != block_payload_size {
+                return Err(CbcError::PrefixParseError(format!(
+                    "block {i}: prefix payload size {payload_size} != {block_payload_size}"
+                )));
+            }
+            if consumed != prefix_size {
+                return Err(CbcError::PrefixParseError(format!(
+                    "block {i}: prefix marker size mismatch"
+                )));
+            }
+            offset += prefix_size;
+        }
+
+        let block = Block::decode(&data[offset..], block_payload_size, i, is_last)?;
+        blocks.push(block);
+        offset += wire_size;
+    }
+
+    // 3. Verify chain commitments (Family A)
+    let _chain_root = chain::verify_chain(
+        &params_canonical,
+        &bootstrap.bootstrap_nonce,
+        &blocks,
+        block_payload_size,
+        suite,
+    )?;
+    let chain_root = blocks
+        .last()
+        .map(|b| b.commitment)
+        .unwrap_or_else(|| chain::compute_c0(&params_canonical, &bootstrap.bootstrap_nonce, suite));
+
+    // 4. Verify Merkle root (Family B)
+    let merkle_root = if has_merkle {
+        let p_payloads: Vec<Vec<u8>> = blocks
+            .iter()
+            .map(|b| b.padded_payload(block_payload_size))
+            .collect();
+        let tree = merkle::MerkleTree::build(&params_hash, &p_payloads, suite);
+        Some(tree.root)
+    } else {
+        None
+    };
+
+    // 5. Parse and verify footer
+    let footer_data = &data[offset..];
+    let footer = StreamFooter::decode(footer_data, has_merkle, &params_hash, suite)?;
+
+    // Security: Enforce canonical file length
+    let expected_footer_size = footer
+        .encoded_size()
+        .ok_or_else(|| CbcError::msg("footer size too large for platform"))?;
+    if footer_data.len() != expected_footer_size {
+        return Err(CbcError::msg(format!(
+            "trailing garbage detected: {} bytes extra",
+            footer_data.len() - expected_footer_size
+        )));
+    }
+
+    // 6. Verify chain root matches footer
+    if footer.chain_root != chain_root {
+        return Err(CbcError::ChainRootMismatch);
+    }
+
+    // Verify Merkle root matches footer (if enabled)
+    if let (Some(computed), Some(footer_merkle)) = (merkle_root, footer.merkle_root) {
+        if computed != footer_merkle {
+            return Err(CbcError::MerkleRootMismatch);
+        }
+    }
+
+    // Skipped: Decompression & Payload Extraction (Not needed for validation)
+
+    Ok(())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use alloc::vec;
     use crate::bootstrap::{FAMILY_A_BIT, FAMILY_B_BIT, FAMILY_C_BIT};
     use crate::encoder::{self, EncoderConfig};
     use crate::hash::HashSuite;
+    use alloc::vec;
 
     #[test]
     fn test_roundtrip_family_a() {
@@ -266,10 +442,10 @@ mod tests {
         let config = EncoderConfig::default();
         let payload = vec![0x42u8; 1024];
         let mut artifact = encoder::encode(&config, &payload, [4u8; 16], &[]).unwrap();
-        
+
         // Flip one bit in the first block
         artifact[70] ^= 0x01;
-        
+
         assert!(decode(&artifact, None).is_err());
     }
 
@@ -278,10 +454,10 @@ mod tests {
         let config = EncoderConfig::default();
         let payload = vec![0x42u8; 1024];
         let mut artifact = encoder::encode(&config, &payload, [5u8; 16], &[]).unwrap();
-        
+
         // Remove trailing bytes
         artifact.truncate(artifact.len() - 10);
-        
+
         assert!(decode(&artifact, None).is_err());
     }
 

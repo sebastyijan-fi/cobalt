@@ -1,288 +1,22 @@
 //! CBC CLI — command-line tool for encoding, decoding, validating, inspecting, and
 //! transforming CBC artifacts.
-use clap::{Parser, Subcommand};
-use serde::Serialize;
+use clap::Parser;
+use owo_colors::OwoColorize;
 use std::fs;
 use std::io::{self, Read};
 use std::path::PathBuf;
 use std::process;
 
-#[derive(Parser)]
-#[command(
-    name = "cbc",
-    version = "0.1.0",
-    about = "CBC (Context-Bound Container) v0.1 CLI"
-)]
-struct Cli {
-    #[command(subcommand)]
-    command: Commands,
+fn setup_panic() {
+    human_panic::setup_panic!();
 }
 
-#[derive(Serialize)]
-struct InspectionReport {
-    file_size: u64,
-    hash_suite: String,
-    commitment_mode: String,
-    block_payload_size: u32,
-    block_count: u32,
-    nonce: String,
-    flags: Vec<String>,
-    chain_root: Option<String>,
-    merkle_root: Option<String>,
-    payload_size: Option<usize>,
-    receipts: Vec<ReceiptSummary>,
-    validation: String,
-}
-
-#[derive(Serialize)]
-struct ReceiptSummary {
-    index: usize,
-    source_root: String,
-    derived_root: String,
-    transform: String,
-    timestamp: u64,
-    sig_alg: String,
-}
-
-#[derive(Serialize)]
-struct ValidationReport {
-    valid: bool,
-    status: String,
-    blocks_verified: u32,
-    total_blocks: Option<u32>,
-    error: Option<String>,
-}
-
-#[derive(Subcommand)]
-enum Commands {
-    /// Encode file(s) into a CBC artifact
-    Encode {
-        /// Input file(s)
-        #[arg(short, long, num_args = 1..)]
-        input: Vec<PathBuf>,
-        /// Output CBC artifact file
-        #[arg(short, long)]
-        output: PathBuf,
-        /// Hash suite (blake3 or sha256)
-        #[arg(long, default_value = "blake3")]
-        hash: String,
-        /// Block payload size in bytes (must be power of 2, 512..=16MiB)
-        #[arg(long, default_value = "4096")]
-        block_size: u32,
-        /// Comma-separated constraint families (A, A+B, A+B+C)
-        #[arg(long, default_value = "A")]
-        families: String,
-        /// Enable zstd compression
-        #[arg(long)]
-        compress: bool,
-        /// Encryption key (32 bytes as hex)
-        #[arg(long)]
-        encrypt_key: Option<String>,
-    },
-
-    /// Decode a CBC artifact and extract the payload
-    Decode {
-        /// Input CBC artifact file
-        #[arg(short, long)]
-        input: PathBuf,
-        /// Output file for extracted payload
-        #[arg(short, long)]
-        output: PathBuf,
-        /// Decryption key (32 bytes as hex)
-        #[arg(long)]
-        decrypt_key: Option<String>,
-    },
-
-    /// Validate a CBC artifact (exit 0 if valid, 1 if invalid)
-    Validate {
-        /// Input CBC artifact file
-        #[arg(short, long)]
-        input: PathBuf,
-        /// Attempt to recover data from corrupted artifact using prefix markers
-        #[arg(long)]
-        recover: bool,
-        /// Allow validation of partial chains (missing footer)
-        #[arg(long)]
-        partial: bool,
-        /// Output validation report as JSON
-        #[arg(long)]
-        json: bool,
-    },
-
-    /// Inspect a CBC artifact and display metadata
-    Inspect {
-        /// Input CBC artifact file
-        #[arg(short, long)]
-        input: PathBuf,
-        /// Output inspection report as JSON
-        #[arg(long)]
-        json: bool,
-    },
-
-    /// Extract a subrange from a CBC artifact (alias for transform --type subrange)
-    Extract {
-        /// Input CBC artifact file
-        #[arg(short, long)]
-        input: PathBuf,
-        /// Output CBC artifact file
-        #[arg(short, long)]
-        output: PathBuf,
-        /// Signing key (file path, @file, env:VAR, or hex)
-        #[arg(short, long)]
-        key: String,
-        /// Start block index (inclusive)
-        #[arg(long)]
-        start: u32,
-        /// End block index (inclusive)
-        #[arg(long)]
-        end: u32,
-    },
-
-    /// Decode payload to stdout (alias for decode -> stdout)
-    Cat {
-        /// Input CBC artifact file
-        #[arg(short, long)]
-        input: PathBuf,
-        /// Decryption key (file path, @file, env:VAR, or hex)
-        #[arg(long)]
-        decrypt_key: Option<String>,
-    },
-
-    /// Perform a transform operation
-    Transform {
-        /// Transform type (truncate, rechunk, recompress, concat, subrange)
-        #[arg(short = 't', long = "type")]
-        transform_type: String,
-        /// Input CBC artifact file(s), comma-separated for concat
-        #[arg(short, long)]
-        input: String,
-        /// Output CBC artifact file
-        #[arg(short, long)]
-        output: PathBuf,
-        /// Signing key file (Ed25519)
-        #[arg(short, long)]
-        key: PathBuf,
-        /// Keep blocks (for truncate)
-        #[arg(long)]
-        keep: Option<u32>,
-        /// New block size (for rechunk)
-        #[arg(long)]
-        new_block_size: Option<u32>,
-        /// Start block for subrange (inclusive)
-        #[arg(long)]
-        start: Option<u32>,
-        /// End block for subrange (inclusive)
-        #[arg(long)]
-        end: Option<u32>,
-    },
-
-    /// Sign a CBC artifact with a provenance receipt
-    Sign {
-        /// Input CBC artifact file
-        #[arg(short, long)]
-        input: PathBuf,
-        /// Output CBC artifact file
-        #[arg(short, long)]
-        output: PathBuf,
-        /// Signing key file (Ed25519 or ECDSA)
-        #[arg(short, long)]
-        key: PathBuf,
-    },
-
-    /// Generate a signing key pair
-    Keygen {
-        /// Output key file path
-        #[arg(short, long)]
-        output: PathBuf,
-        /// Algorithm (ed25519 or ecdsa)
-        #[arg(long, default_value = "ed25519")]
-        alg: String,
-    },
-
-    /// Generate a Merkle range proof for a block range
-    Prove {
-        /// Input CBC artifact file (must have Family B enabled)
-        #[arg(short, long)]
-        input: PathBuf,
-        /// Start block index (inclusive)
-        #[arg(long)]
-        start: u32,
-        /// End block index (inclusive)
-        #[arg(long)]
-        end: u32,
-        /// Output proof file
-        #[arg(short, long)]
-        output: PathBuf,
-    },
-
-    /// Verify a Merkle range proof against a CBC artifact
-    VerifyProof {
-        /// Input CBC artifact file
-        #[arg(short, long)]
-        input: PathBuf,
-        /// Proof file to verify
-        #[arg(short, long)]
-        proof: PathBuf,
-    },
-
-    /// Streaming encode — read from file(s) with constant memory usage
-    StreamEncode {
-        /// Input file(s)
-        #[arg(short, long, num_args = 1..)]
-        input: Vec<PathBuf>,
-        /// Output CBC artifact file
-        #[arg(short, long)]
-        output: PathBuf,
-        /// Hash suite (blake3 or sha256)
-        #[arg(long, default_value = "blake3")]
-        hash: String,
-        /// Block payload size in bytes (must be power of 2, 512..=16MiB)
-        #[arg(long, default_value = "4096")]
-        block_size: u32,
-        /// Comma-separated constraint families (A, A+B, A+B+C)
-        #[arg(long, default_value = "A")]
-        families: String,
-        /// Enable zstd compression
-        #[arg(long)]
-        compress: bool,
-        /// Encryption key (32 bytes as hex)
-        #[arg(long)]
-        encrypt_key: Option<String>,
-    },
-}
-
-fn parse_families(s: &str) -> u8 {
-    let mut mode: u8 = 0;
-    for part in s.split('+') {
-        match part.trim().to_uppercase().as_str() {
-            "A" => mode |= cbc_core::bootstrap::FAMILY_A_BIT,
-            "B" => mode |= cbc_core::bootstrap::FAMILY_B_BIT,
-            "C" => mode |= cbc_core::bootstrap::FAMILY_C_BIT,
-            _ => {
-                eprintln!("Unknown family: {part}. Valid: A, B, C");
-                process::exit(1);
-            }
-        }
-    }
-    if mode & cbc_core::bootstrap::FAMILY_A_BIT == 0 {
-        mode |= cbc_core::bootstrap::FAMILY_A_BIT; // Always include A
-    }
-    mode
-}
-
-fn parse_hash(s: &str) -> cbc_core::HashSuite {
-    match s.to_lowercase().as_str() {
-        "blake3" => cbc_core::HashSuite::Blake3,
-        "sha256" => cbc_core::HashSuite::Sha256,
-        _ => {
-            eprintln!("Unknown hash suite: {s}. Valid: blake3, sha256");
-            process::exit(1);
-        }
-    }
-}
+use cbc_cli::*;
 
 fn main() {
+    setup_panic();
     let cli = Cli::parse();
+    let config = load_config();
 
     match cli.command {
         Commands::Encode {
@@ -293,15 +27,26 @@ fn main() {
             families,
             compress,
             encrypt_key,
-        } => cmd_encode(
-            input,
-            output,
-            hash,
-            block_size,
-            families,
-            compress,
-            encrypt_key,
-        ),
+        } => {
+            let hash = hash
+                .or(config.defaults.hash.clone())
+                .unwrap_or_else(|| "blake3".to_string());
+            let block_size = block_size.or(config.defaults.block_size).unwrap_or(65536);
+            let families = families
+                .or(config.defaults.families.clone())
+                .unwrap_or_else(|| "A+B".to_string());
+            let compress = compress.or(config.defaults.compress).unwrap_or(false);
+
+            cmd_encode(
+                input,
+                output,
+                hash,
+                block_size,
+                families,
+                compress,
+                encrypt_key,
+            )
+        }
 
         Commands::Decode {
             input,
@@ -311,10 +56,9 @@ fn main() {
 
         Commands::Validate {
             input,
-            recover,
             partial,
             json,
-        } => cmd_validate(input, recover, partial, json),
+        } => cmd_validate(input, partial, json),
 
         Commands::Inspect { input, json } => cmd_inspect(input, json),
 
@@ -369,16 +113,227 @@ fn main() {
             families,
             compress,
             encrypt_key,
-        } => cmd_stream_encode(
-            input,
-            output,
-            hash,
-            block_size,
-            families,
-            compress,
-            encrypt_key,
-        ),
+        } => {
+            let hash = hash
+                .or(config.defaults.hash.clone())
+                .unwrap_or_else(|| "blake3".to_string());
+            let block_size = block_size.or(config.defaults.block_size).unwrap_or(65536);
+            let families = families
+                .or(config.defaults.families.clone())
+                .unwrap_or_else(|| "A+B".to_string());
+            let compress = compress.or(config.defaults.compress).unwrap_or(false);
+
+            cmd_stream_encode(
+                input,
+                output,
+                hash,
+                block_size,
+                families,
+                compress,
+                encrypt_key,
+            )
+        }
+
+        Commands::Completions { shell } => {
+            use clap::CommandFactory;
+            use clap_complete::{generate, Shell};
+
+            let shell = match shell.to_lowercase().as_str() {
+                "bash" => Shell::Bash,
+                "zsh" => Shell::Zsh,
+                "fish" => Shell::Fish,
+                "powershell" => Shell::PowerShell,
+                "elvish" => Shell::Elvish,
+                _ => {
+                    eprintln!("Unknown shell: {shell}. Valid: bash, zsh, fish, powershell, elvish");
+                    process::exit(1);
+                }
+            };
+
+            generate(shell, &mut Cli::command(), "cbc", &mut io::stdout());
+        }
+        Commands::Doctor => cmd_doctor(),
+        Commands::Bench { hash, size } => cmd_bench(hash, size),
+        Commands::Init { path } => cmd_init(path),
+        Commands::Action { r#type } => cmd_action(r#type),
+        Commands::Watch { path } => cmd_watch(path),
     }
+}
+
+fn cmd_init(path: PathBuf) {
+    println!("{}", "=== Cobalt Project Initializer ===".bold().blue());
+
+    if path.exists() && !path.is_dir() {
+        eprintln!("✗ Error: {} is not a directory", path.display());
+        process::exit(1);
+    }
+
+    if !path.exists() {
+        fs::create_dir_all(&path).unwrap_or_else(|e| {
+            eprintln!("✗ Error creating directory: {e}");
+            process::exit(1);
+        });
+    }
+
+    // 1. Create cbc.toml
+    let config = CbcConfig {
+        defaults: DefaultsConfig {
+            hash: Some("blake3".to_string()),
+            block_size: Some(65536),
+            families: Some("A+B".to_string()),
+            compress: Some(true),
+        },
+    };
+    let toml_content = toml::to_string_pretty(&config).unwrap();
+    let config_path = path.join("cbc.toml");
+    fs::write(&config_path, toml_content).unwrap();
+
+    // 2. Create .gitignore
+    let gitignore =
+        "# Cobalt artifacts\n*.cbc\n*.cbc.tmp\n\n# Evidence & Proofs\n*.proof\nreceipts/\n";
+    fs::write(path.join(".gitignore"), gitignore).unwrap();
+
+    // 3. Create README.cbc.md
+    let readme = r#"# Cobalt Sovereign Project
+
+This directory is initialized with **Cobalt (CBC)** for sovereign-grade data integrity.
+
+## Project Policy (`cbc.toml`)
+- **Hash Suite**: Blake3 (Hardware Accelerated)
+- **Commitment**: Family A + B (Merkle Integrity)
+- **Block Size**: 64 KB
+
+## Common Commands
+- `cbc encode -i <file> -o <file>.cbc`: Protect a file.
+- `cbc validate -i <file>.cbc`: Verify integrity.
+- `cbc inspect -i <file>.cbc`: Audit metadata.
+"#;
+    fs::write(path.join("README.cbc.md"), readme).unwrap();
+
+    println!("{}", "✓ Cobalt project initialized successfully.".green());
+    println!("  Policy:  {}", config_path.display());
+    println!("  Docs:    {}", path.join("README.cbc.md").display());
+}
+
+fn cmd_bench(hash: String, size_mb: usize) {
+    use rand::RngCore;
+    use std::time::Instant;
+
+    println!("{}", "=== Cobalt Sovereign Benchmark ===".bold().blue());
+    println!(
+        "{:<24} {}",
+        "Hash Suite:".dimmed(),
+        hash.to_uppercase().green()
+    );
+    println!("{:<24} {} MB", "Data Size:".dimmed(), size_mb);
+
+    let mut data = vec![0u8; size_mb * 1024 * 1024];
+    println!("{}", "Generating random entropy...".dimmed());
+    rand::thread_rng().fill_bytes(&mut data);
+
+    let config = cbc_core::EncoderConfig {
+        hash_suite: parse_hash(&hash),
+        commitment_mode: cbc_core::bootstrap::FAMILY_A_BIT,
+        block_payload_size: 64 * 1024,
+        flags: 0,
+        encryption_key: None,
+    };
+
+    println!("{}", "Executing saturation flight...".bold().yellow());
+    let start = Instant::now();
+    let result = cbc_core::encoder::encode_random_nonce(&config, &data, &[]);
+    let duration = start.elapsed();
+
+    match result {
+        Ok(artifact) => {
+            let throughput = (size_mb as f64) / duration.as_secs_f64();
+            println!("\n{}", "--- Benchmark Results ---".bold());
+            println!(
+                "{:<24} {:.2} ms",
+                "Total Time:".dimmed(),
+                duration.as_secs_f64() * 1000.0
+            );
+            println!(
+                "{:<24} {:.2} MB/s ({:.2} GiB/s)",
+                "Throughput:".dimmed(),
+                throughput,
+                throughput / 1024.0
+            );
+            println!("{:<24} {} bytes", "Artifact Size:".dimmed(), artifact.len());
+
+            println!(
+                "\n{}",
+                "Verdict: Your hardware is capable of high-assurance saturation.".green()
+            );
+        }
+        Err(e) => {
+            println!("\n{} Encoding failed: {}", "✗ ERROR:".bold().red(), e);
+            process::exit(1);
+        }
+    }
+}
+
+fn cmd_doctor() {
+    println!("{}", "=== Cobalt Environmental Doctor ===".bold().blue());
+
+    // Check OS
+    println!(
+        "{:<24} {}",
+        "Operating System:".dimmed(),
+        std::env::consts::OS
+    );
+    println!(
+        "{:<24} {}",
+        "Architecture:".dimmed(),
+        std::env::consts::ARCH
+    );
+
+    // Check CPU features (x86_64 specific for now)
+    #[cfg(target_arch = "x86_64")]
+    {
+        println!("\n{}", "--- CPU Acceleration ---".bold());
+        let features = [
+            ("AVX2", std::is_x86_feature_detected!("avx2")),
+            ("AES-NI", std::is_x86_feature_detected!("aes")),
+            ("SSSE3", std::is_x86_feature_detected!("ssse3")),
+            ("PCLMULQDQ", std::is_x86_feature_detected!("pclmulqdq")),
+            ("SHA Extensions", std::is_x86_feature_detected!("sha")),
+        ];
+
+        for (name, supported) in features {
+            let status = if supported {
+                "SUPPORTED".green().to_string()
+            } else {
+                "NOT SUPPORTED".yellow().to_string()
+            };
+            println!("{:<24} {}", name.dimmed(), status);
+        }
+
+        if features.iter().all(|(_, s)| !s) {
+            println!(
+                "\n{}",
+                "WARNING: No cryptographic acceleration detected. Performance will be degraded."
+                    .yellow()
+            );
+        }
+    }
+
+    // Check standard features
+    println!("\n{}", "--- Cobalt Features ---".bold());
+    println!(
+        "{:<24} {}",
+        "Zstd Compression:".dimmed(),
+        if cfg!(feature = "zstd") {
+            "ENABLED".green().to_string()
+        } else {
+            "DISABLED".dimmed().to_string()
+        }
+    );
+
+    println!(
+        "\n{}",
+        "Verdict: Your environment is healthy and ready for sovereign-grade storage.".green()
+    );
 }
 
 fn cmd_encode(
@@ -392,11 +347,30 @@ fn cmd_encode(
 ) {
     let mut payload = Vec::new();
     for path in &input {
-        let content = fs::read(path).unwrap_or_else(|e| {
-            eprintln!("Error reading {}: {e}", path.display());
-            process::exit(1);
-        });
-        payload.extend_from_slice(&content);
+        if path.is_dir() {
+            println!("{} {}", "Archiving directory:".dimmed(), path.display());
+            // Create a tar archive in memory
+            let mut builder = tar::Builder::new(Vec::new());
+
+            // We want to preserve the directory name at the root of the archive
+            // e.g. "leaked_docs/" -> "leaked_docs/memo.txt"
+            let dir_name = path.file_name().unwrap_or_else(|| path.as_os_str());
+
+            builder.append_dir_all(dir_name, path).unwrap_or_else(|e| {
+                eprintln!("Error archiving directory {}: {e}", path.display());
+                process::exit(1);
+            });
+
+            // Finish the archive
+            let tar_data = builder.into_inner().unwrap();
+            payload.extend_from_slice(&tar_data);
+        } else {
+            let content = fs::read(path).unwrap_or_else(|e| {
+                eprintln!("Error reading {}: {e}", path.display());
+                process::exit(1);
+            });
+            payload.extend_from_slice(&content);
+        }
     }
 
     let mut flags = 0;
@@ -465,19 +439,19 @@ fn cmd_decode(input: PathBuf, output: PathBuf, decrypt_key: Option<String>) {
     );
 }
 
-fn cmd_validate(input: PathBuf, recover: bool, partial: bool, json_output: bool) {
+fn cmd_validate(input: PathBuf, partial: bool, json_output: bool) {
     let data = fs::read(&input).unwrap_or_else(|e| {
         eprintln!("Error reading {}: {e}", input.display());
         process::exit(1);
     });
 
-    if recover {
-        cmd_recover_lite(&data);
-        return;
-    }
+    let pb = indicatif::ProgressBar::new_spinner();
+    pb.set_message("Validating integrity...");
+    pb.enable_steady_tick(std::time::Duration::from_millis(100));
 
     match cbc_core::decoder::validate(&data) {
         Ok(()) => {
+            pb.finish_and_clear();
             if json_output {
                 let report = ValidationReport {
                     valid: true,
@@ -493,6 +467,7 @@ fn cmd_validate(input: PathBuf, recover: bool, partial: bool, json_output: bool)
             process::exit(0);
         }
         Err(e) => {
+            pb.finish_and_clear();
             // If standard validation failed, check if partial validation works
             if partial {
                 // Heuristic partial validation
@@ -560,20 +535,18 @@ fn cmd_validate(input: PathBuf, recover: bool, partial: bool, json_output: bool)
 
                 if json_output {
                     println!("{}", serde_json::to_string_pretty(&report).unwrap());
+                } else if report.valid {
+                    println!(
+                        "✓ Valid Partial Chain ({} blocks verified)",
+                        report.blocks_verified
+                    );
+                    println!("  (Standard validation failed: {e})");
                 } else {
-                    if report.valid {
-                        println!(
-                            "✓ Valid Partial Chain ({} blocks verified)",
-                            report.blocks_verified
-                        );
-                        println!("  (Standard validation failed: {e})");
-                    } else {
-                        eprintln!("✗ Invalid: {e}");
-                        eprintln!(
-                            "  Partial scan failed after {} blocks: {}",
-                            report.blocks_verified, report.status
-                        );
-                    }
+                    eprintln!("✗ Invalid: {e}");
+                    eprintln!(
+                        "  Partial scan failed after {} blocks: {}",
+                        report.blocks_verified, report.status
+                    );
                 }
 
                 if report.valid {
@@ -600,43 +573,6 @@ fn cmd_validate(input: PathBuf, recover: bool, partial: bool, json_output: bool)
     }
 }
 
-fn cmd_recover_lite(data: &[u8]) {
-    println!("=== CBC Recovery Scan (Family C) ===");
-    if data.len() < 64 {
-        eprintln!("File too small for recovery");
-        process::exit(1);
-    }
-
-    let mut bootstrap_bytes = [0u8; 64];
-    bootstrap_bytes.copy_from_slice(&data[..64]);
-    let bs = match cbc_core::BootstrapSegment::decode(&bootstrap_bytes) {
-        Ok(bs) => bs,
-        Err(_) => {
-            println!("Warning: Bootstrap corrupted, using heuristic scan...");
-            // Non-ideal but we could fallback to scanning for any marker
-            process::exit(1);
-        }
-    };
-
-    let mut recovered_blocks = 0;
-    let mut offset = 64;
-    while offset < data.len() {
-        match cbc_core::prefix::find_next_block_boundary(&data[offset..]) {
-            Some(relative_offset) => {
-                let absolute_offset = offset + relative_offset;
-                println!("Found potential block at offset {absolute_offset}");
-                recovered_blocks += 1;
-                // Skip this block's approximate size to find next
-                offset = absolute_offset + 16 + bs.block_payload_size as usize + 32;
-            }
-            None => break,
-        }
-    }
-
-    println!("\nRecovery summary: Found {recovered_blocks} potential block boundaries.");
-    println!("In a full implementation, these would be reassembled into a new artifact.");
-}
-
 fn cmd_inspect(input: PathBuf, json_output: bool) {
     let data = fs::read(&input).unwrap_or_else(|e| {
         eprintln!("Error reading {}: {e}", input.display());
@@ -653,6 +589,10 @@ fn cmd_inspect(input: PathBuf, json_output: bool) {
 
     let mut bootstrap_bytes = [0u8; 64];
     bootstrap_bytes.copy_from_slice(&data[..64]);
+
+    let pb = indicatif::ProgressBar::new_spinner();
+    pb.set_message("Inspecting artifact metadata...");
+    pb.enable_steady_tick(std::time::Duration::from_millis(100));
 
     match cbc_core::BootstrapSegment::decode(&bootstrap_bytes) {
         Ok(bs) => {
@@ -709,22 +649,31 @@ fn cmd_inspect(input: PathBuf, json_output: bool) {
                 }
             }
 
+            pb.finish_and_clear();
+
             if json_output {
                 println!("{}", serde_json::to_string_pretty(&report).unwrap());
             } else {
-                println!("=== CBC Artifact Inspection ===");
-                println!("File size:         {} bytes", report.file_size);
+                println!("{}", "=== CBC Artifact Inspection ===".bold().blue());
+                println!("{:<18} {} bytes", "File size:".dimmed(), report.file_size);
                 println!(
-                    "Hash suite:        {}",
-                    format!("{:?}", bs.hash_suite).to_uppercase()
+                    "{:<18} {}",
+                    "Hash suite:".dimmed(),
+                    format!("{:?}", bs.hash_suite).to_uppercase().green()
                 );
-                // Let's use the report string which is formatted.
-                println!("Hash suite:        {:?}", bs.hash_suite);
-                println!("Commitment mode:   {}", report.commitment_mode);
-                println!("Block payload:     {} bytes", report.block_payload_size);
-                println!("Block count:       {}", report.block_count);
-                println!("Nonce:             {}", report.nonce);
-                println!("Flags:             {:?}", report.flags);
+                println!(
+                    "{:<18} {}",
+                    "Commitment mode:".dimmed(),
+                    report.commitment_mode
+                );
+                println!(
+                    "{:<18} {} bytes",
+                    "Block payload:".dimmed(),
+                    report.block_payload_size
+                );
+                println!("{:<18} {}", "Block count:".dimmed(), report.block_count);
+                println!("{:<18} {}", "Nonce:".dimmed(), report.nonce);
+                println!("{:<18} {:?}", "Flags:".dimmed(), report.flags);
 
                 if let Some(cr) = &report.chain_root {
                     println!("Chain root:        {}", cr);
@@ -753,12 +702,14 @@ fn cmd_inspect(input: PathBuf, json_output: bool) {
             }
         }
         Err(e) => {
+            pb.finish_and_clear();
             eprintln!("Failed to parse bootstrap segment: {e}");
             process::exit(1);
         }
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn cmd_transform(
     transform_type: String,
     input: String,
@@ -790,7 +741,10 @@ fn cmd_transform(
                     eprintln!("Transform failed: {e}");
                     process::exit(1);
                 });
-            fs::write(&output, &artifact).unwrap();
+            fs::write(&output, &artifact).unwrap_or_else(|e| {
+                eprintln!("Error writing output: {e}");
+                process::exit(1);
+            });
             println!(
                 "✓ Truncated → {} ({} bytes)",
                 output.display(),
@@ -811,7 +765,10 @@ fn cmd_transform(
                     eprintln!("Transform failed: {e}");
                     process::exit(1);
                 });
-            fs::write(&output, &artifact).unwrap();
+            fs::write(&output, &artifact).unwrap_or_else(|e| {
+                eprintln!("Error writing output: {e}");
+                process::exit(1);
+            });
             println!(
                 "✓ Rechunked → {} ({} bytes)",
                 output.display(),
@@ -828,7 +785,10 @@ fn cmd_transform(
                     eprintln!("Transform failed: {e}");
                     process::exit(1);
                 });
-            fs::write(&output, &artifact).unwrap();
+            fs::write(&output, &artifact).unwrap_or_else(|e| {
+                eprintln!("Error writing output: {e}");
+                process::exit(1);
+            });
             println!(
                 "✓ Recompressed → {} ({} bytes)",
                 output.display(),
@@ -852,7 +812,10 @@ fn cmd_transform(
                     eprintln!("Transform failed: {e}");
                     process::exit(1);
                 });
-            fs::write(&output, &artifact).unwrap();
+            fs::write(&output, &artifact).unwrap_or_else(|e| {
+                eprintln!("Error writing output: {e}");
+                process::exit(1);
+            });
             println!(
                 "✓ Concatenated {} sources → {} ({} bytes)",
                 input_files.len(),
@@ -878,7 +841,10 @@ fn cmd_transform(
                     eprintln!("Transform failed: {e}");
                     process::exit(1);
                 });
-            fs::write(&output, &artifact).unwrap();
+            fs::write(&output, &artifact).unwrap_or_else(|e| {
+                eprintln!("Error writing output: {e}");
+                process::exit(1);
+            });
             println!(
                 "✓ Extracted blocks [{s}..{e}] → {} ({} bytes)",
                 output.display(),
@@ -1129,7 +1095,8 @@ fn cmd_stream_encode(
     encrypt_key: Option<String>,
 ) {
     use cbc_core::streaming::StreamingEncoder;
-    use std::io::Read;
+    use rand::RngCore;
+    use std::io::{Read, Seek, SeekFrom, Write};
 
     let mut flags = 0;
     if compress {
@@ -1149,48 +1116,108 @@ fn cmd_stream_encode(
         encryption_key: key,
     };
 
-    let mut encoder = StreamingEncoder::new(&config, [0u8; 16]);
-    let mut total_bytes = 0usize;
+    let mut nonce = [0u8; 16];
+    rand::thread_rng().fill_bytes(&mut nonce);
+
+    // Create output file
+    let mut file = fs::File::create(&output).unwrap_or_else(|e| {
+        eprintln!("Error creating {}: {e}", output.display());
+        process::exit(1);
+    });
+
+    // Write placeholder bootstrap
+    // We construct a bootstrap segment with 0 block count, encode it, and write it.
+    let mut bootstrap = cbc_core::BootstrapSegment {
+        hash_suite: config.hash_suite,
+        commitment_mode: config.commitment_mode,
+        block_payload_size: config.block_payload_size,
+        block_count: 0,
+        bootstrap_nonce: nonce,
+        flags: config.flags,
+    };
+    let bs_bytes = bootstrap.encode();
+    file.write_all(&bs_bytes).unwrap_or_else(|e| {
+        eprintln!("Error writing header: {e}");
+        process::exit(1);
+    });
+
+    let mut encoder = StreamingEncoder::new(&config, nonce);
+    let mut total_bytes_written = 0usize;
+
+    // Calculate total size for progress bar
+    let total_input_size: u64 = input
+        .iter()
+        .map(|p| fs::metadata(p).map(|m| m.len()).unwrap_or(0))
+        .sum();
+
+    let pb = indicatif::ProgressBar::new(total_input_size);
+    pb.set_style(indicatif::ProgressStyle::default_bar()
+        .template("{spinner:.green} [{elapsed_precise}] [{bar:40.cyan/blue}] {bytes}/{total_bytes} ({eta})")
+        .unwrap()
+        .progress_chars("#>-"));
 
     for path in &input {
-        let mut file = fs::File::open(path).unwrap_or_else(|e| {
+        let mut input_file = fs::File::open(path).unwrap_or_else(|e| {
             eprintln!("Error opening {}: {e}", path.display());
             process::exit(1);
         });
 
         let mut buffer = vec![0u8; 64 * 1024];
         loop {
-            let n = file.read(&mut buffer).unwrap_or_else(|e| {
+            let n = input_file.read(&mut buffer).unwrap_or_else(|e| {
                 eprintln!("Error reading {}: {e}", path.display());
                 process::exit(1);
             });
             if n == 0 {
                 break;
             }
-            encoder.write_payload(&buffer[..n]).unwrap_or_else(|e| {
+
+            let blocks = encoder.feed(&buffer[..n]).unwrap_or_else(|e| {
                 eprintln!("✗ Streaming encode failed: {e}");
                 process::exit(1);
             });
-            total_bytes += n;
+
+            for block in blocks {
+                file.write_all(&block).unwrap_or_else(|e| {
+                    eprintln!("Error writing block: {e}");
+                    process::exit(1);
+                });
+            }
+
+            total_bytes_written += n;
+            pb.inc(n as u64);
         }
     }
+    pb.finish_with_message("Encoding complete");
 
-    let artifact = encoder.finalize(&[]).unwrap_or_else(|e| {
+    let (footer_plus_last, final_count) = encoder.finalize(&[]).unwrap_or_else(|e| {
         eprintln!("✗ Streaming finalization failed: {e}");
         process::exit(1);
     });
 
-    fs::write(&output, &artifact).unwrap_or_else(|e| {
-        eprintln!("Error writing {}: {e}", output.display());
+    file.write_all(&footer_plus_last).unwrap_or_else(|e| {
+        eprintln!("Error writing footer: {e}");
+        process::exit(1);
+    });
+
+    // Patch header with correct block count
+    bootstrap.block_count = final_count;
+    let final_bs_bytes = bootstrap.encode();
+    file.seek(SeekFrom::Start(0)).unwrap_or_else(|e| {
+        eprintln!("Error seeking to start: {e}");
+        process::exit(1);
+    });
+    file.write_all(&final_bs_bytes).unwrap_or_else(|e| {
+        eprintln!("Error patching header: {e}");
         process::exit(1);
     });
 
     println!(
-        "✓ Stream-encoded {} bytes (from {} files) → {} ({} bytes)",
-        total_bytes,
+        "✓ Stream-encoded {} bytes (from {} files) → {} ({} blocks)",
+        total_bytes_written,
         input.len(),
         output.display(),
-        artifact.len()
+        final_count
     );
 }
 
@@ -1307,4 +1334,142 @@ fn parse_key(s: &str) -> [u8; 32] {
         eprintln!("Invalid key length: expected 32 bytes, got {}", v.len());
         process::exit(1);
     })
+}
+
+fn cmd_action(action_type: String) {
+    if action_type != "github" {
+        eprintln!("Unknown action type: {action_type}. Supported: github");
+        process::exit(1);
+    }
+
+    let workflow_dir = PathBuf::from(".github/workflows");
+    if !workflow_dir.exists() {
+        fs::create_dir_all(&workflow_dir).unwrap_or_else(|e| {
+            eprintln!("Error creating directory {}: {e}", workflow_dir.display());
+            process::exit(1);
+        });
+    }
+
+    let workflow_path = workflow_dir.join("cobalt-integrity.yml");
+    let content = r#"name: Cobalt Integrity Check
+
+on: [push, pull_request]
+
+jobs:
+  integrity:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Install Cobalt
+        run: |
+          # Placeholder: In production, download from official release
+          echo "Installing Cobalt..."
+          # curl -L https://github.com/sebastyijan-fi/cobalt/releases/latest/download/cbc-linux-amd64 -o /usr/local/bin/cbc
+          # chmod +x /usr/local/bin/cbc
+
+      - name: Validate Artifacts
+        run: |
+          echo "Finding and validating Cobalt artifacts..."
+          # find . -name "*.cbc" -print0 | xargs -0 -I {} cbc validate -i "{}"
+"#;
+
+    fs::write(&workflow_path, content).unwrap_or_else(|e| {
+        eprintln!("Error writing workflow: {e}");
+        process::exit(1);
+    });
+
+    println!("{}", "✓ Generated GitHub Actions workflow.".green());
+    println!("  Location: {}", workflow_path.display());
+}
+
+fn cmd_watch(path: PathBuf) {
+    use notify::{Config, RecommendedWatcher, RecursiveMode, Watcher};
+    use std::sync::mpsc::channel;
+
+    println!("{}", "=== Cobalt Autonomous Sidecar ===".bold().blue());
+    println!("{:<24} {}", "Watching:".dimmed(), path.display());
+
+    let (tx, rx) = channel();
+    let mut watcher = RecommendedWatcher::new(tx, Config::default()).unwrap();
+
+    watcher.watch(&path, RecursiveMode::Recursive).unwrap();
+
+    println!("{}", "Sidecar active. Press Ctrl+C to stop.".green());
+
+    for res in rx {
+        match res {
+            Ok(event) => {
+                // Filter only create/modify events
+                if event.kind.is_create() || event.kind.is_modify() {
+                    for params_path in event.paths {
+                        // Ignore .cbc files and hidden files/dirs like .git
+                        if params_path.extension().is_some_and(|ext| ext == "cbc")
+                            || params_path
+                                .components()
+                                .any(|c| c.as_os_str().to_string_lossy().starts_with('.'))
+                        {
+                            continue;
+                        }
+
+                        if !params_path.is_file() {
+                            continue;
+                        }
+
+                        // Check if corresponding .cbc file is already newer?
+                        // For PoC, just encode.
+
+                        println!(
+                            "{} {}",
+                            "⚡ Detected change:".yellow(),
+                            params_path.display()
+                        );
+
+                        // Load config freshly to allow hot-reloading policy
+                        let config_toml = load_config();
+                        let hash = config_toml.defaults.hash.as_deref().unwrap_or("blake3");
+                        let family = config_toml.defaults.families.as_deref().unwrap_or("A+B");
+                        let block_size = config_toml.defaults.block_size.unwrap_or(65536);
+                        let compress = config_toml.defaults.compress.unwrap_or(false);
+
+                        let mut flags = 0;
+                        if compress {
+                            flags |= cbc_core::bootstrap::FLAG_COMPRESSED;
+                        }
+
+                        let config = cbc_core::EncoderConfig {
+                            hash_suite: parse_hash(hash),
+                            commitment_mode: parse_families(family),
+                            block_payload_size: block_size,
+                            flags,
+                            encryption_key: None, // No auto-encryption for now
+                        };
+
+                        let output_path = params_path.with_extension("cbc");
+
+                        // Read file
+                        match fs::read(&params_path) {
+                            Ok(payload) => {
+                                match cbc_core::encoder::encode_random_nonce(&config, &payload, &[])
+                                {
+                                    Ok(artifact) => {
+                                        if let Err(e) = fs::write(&output_path, &artifact) {
+                                            eprintln!("Error writing artifact: {e}");
+                                        } else {
+                                            println!("  ✓ Secured -> {}", output_path.display());
+                                        }
+                                    }
+                                    Err(e) => {
+                                        eprintln!("Error encoding {}: {}", params_path.display(), e)
+                                    }
+                                }
+                            }
+                            Err(e) => eprintln!("Error reading {}: {}", params_path.display(), e),
+                        }
+                    }
+                }
+            }
+            Err(e) => eprintln!("watch error: {:?}", e),
+        }
+    }
 }

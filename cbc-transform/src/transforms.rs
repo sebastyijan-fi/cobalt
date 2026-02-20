@@ -2,7 +2,7 @@
 //!
 //! Each transform decodes the source artifact, extracts/transforms the payload,
 //! re-encodes with new parameters, and produces a signed receipt.
-use crate::error::Result;
+use crate::error::{Result, TransformError};
 use crate::receipt::{self, Receipt, SigningKey, TransformType};
 use cbc_core::decoder;
 use cbc_core::encoder::{self, EncoderConfig};
@@ -88,7 +88,12 @@ pub fn truncate(
     }
 
     // Extract payload for kept blocks
-    let keep_bytes = (keep_blocks - 1) as usize * block_payload_size as usize;
+    let keep_bytes = (keep_blocks as usize)
+        .checked_sub(1)
+        .and_then(|k| k.checked_mul(block_payload_size as usize))
+        .ok_or_else(|| {
+            TransformError::InvalidTransform("truncation range too large for platform".to_string())
+        })?;
     let new_payload = if keep_bytes < decoded.payload.len() {
         // Last kept block may be partial
         let full_blocks_payload = keep_bytes;
@@ -255,11 +260,11 @@ pub fn concatenate(sources: &[&[u8]], signing_key: &SigningKey) -> Result<(Vec<u
     }
 
     let final_artifact = encoder::encode(&config, &combined_payload, nonce, &receipt_bytes);
-
     Ok((final_artifact?, receipts))
 }
 
 /// T5: Subrange extraction (§9.1).
+#[allow(clippy::too_many_arguments)]
 pub fn subrange_extract(
     source: &[u8],
     start_block: u32,
@@ -277,9 +282,18 @@ pub fn subrange_extract(
     }
 
     // Extract the payload for the specified block range
-    let start_byte = start_block as usize * block_payload_size as usize;
-    let end_byte =
-        ((end_block as usize + 1) * block_payload_size as usize).min(decoded.payload.len());
+    let start_byte = (start_block as usize)
+        .checked_mul(block_payload_size as usize)
+        .ok_or_else(|| {
+            TransformError::InvalidTransform("start_block too large for platform".to_string())
+        })?;
+    let end_byte = (end_block as usize)
+        .checked_add(1)
+        .and_then(|e| e.checked_mul(block_payload_size as usize))
+        .map(|e| e.min(decoded.payload.len()))
+        .ok_or_else(|| {
+            TransformError::InvalidTransform("end_block too large for platform".to_string())
+        })?;
     let new_payload = decoded.payload[start_byte..end_byte].to_vec();
 
     let config = EncoderConfig {
