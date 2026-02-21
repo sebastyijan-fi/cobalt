@@ -29,7 +29,7 @@ proptest! {
         // 1. Encode with Rust
         let artifact = encoder::encode(&config, &payload, nonce, &[]).unwrap();
         let rust_decoded = decoder::decode(&artifact, None).unwrap();
-        let rust_root = rust_decoded.chain_root;
+        let rust_root = rust_decoded.root_hash;
 
         // 2. Save to temp file
         let mut temp_file = tempfile::NamedTempFile::new().unwrap();
@@ -57,7 +57,7 @@ proptest! {
         let oracle_json: serde_json::Value = serde_json::from_str(&stdout)
             .expect("Failed to parse Oracle JSON output");
 
-        let oracle_root_hex = oracle_json["chain_root"].as_str().unwrap();
+        let oracle_root_hex = oracle_json["root_hash"].as_str().unwrap();
         let rust_root_hex = hex::encode(rust_root);
 
         prop_assert_eq!(rust_root_hex, oracle_root_hex, "Rust and Python Oracle disagreed on Chain Root!");

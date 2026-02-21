@@ -8,7 +8,7 @@ use alloc::vec::Vec;
 pub const FOOTER_MAGIC: [u8; 4] = [0x43, 0x42, 0x43, 0x46];
 
 /// The fixed portion of the footer (before receipts), without merkle_root.
-pub const FOOTER_FIXED_SIZE_A: usize = 4 + 4 + 32 + 4; // magic + length + chain_root + receipt_count = 44
+pub const FOOTER_FIXED_SIZE_A: usize = 4 + 4 + 32 + 4; // magic + length + root_hash + receipt_count = 44
 /// With merkle_root (Family B).
 pub const FOOTER_FIXED_SIZE_AB: usize = FOOTER_FIXED_SIZE_A + 32; // + merkle_root = 76
 
@@ -18,7 +18,7 @@ pub const FOOTER_COMMITMENT_SIZE: usize = 32;
 /// Represents the stream footer.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StreamFooter {
-    pub chain_root: [u8; 32],
+    pub root_hash: [u8; 32],
     pub merkle_root: Option<[u8; 32]>,
     pub receipt_count: u32,
     pub receipt_slots: Vec<Vec<u8>>, // Raw receipt bytes
@@ -28,7 +28,7 @@ pub struct StreamFooter {
 impl StreamFooter {
     /// Encode the footer to bytes.
     pub fn encode(
-        chain_root: [u8; 32],
+        root_hash: [u8; 32],
         merkle_root: Option<[u8; 32]>,
         receipt_slots: &[Vec<u8>],
         params_hash: &[u8; 32],
@@ -46,8 +46,8 @@ impl StreamFooter {
         let length_offset = buf.len();
         buf.extend_from_slice(&0u32.to_le_bytes());
 
-        // chain_root
-        buf.extend_from_slice(&chain_root);
+        // root_hash
+        buf.extend_from_slice(&root_hash);
 
         // merkle_root (only if Family B)
         if let Some(mr) = merkle_root {
@@ -137,9 +137,9 @@ impl StreamFooter {
             });
         }
 
-        // chain_root
-        let mut chain_root = [0u8; 32];
-        chain_root.copy_from_slice(&bytes[offset..offset + 32]);
+        // root_hash
+        let mut root_hash = [0u8; 32];
+        root_hash.copy_from_slice(&bytes[offset..offset + 32]);
         offset += 32;
 
         // merkle_root
@@ -210,7 +210,7 @@ impl StreamFooter {
         }
 
         Ok(Self {
-            chain_root,
+            root_hash,
             merkle_root,
             receipt_count,
             receipt_slots,
@@ -220,7 +220,7 @@ impl StreamFooter {
 
     /// Total encoded size of this footer. Returns None if overflow occurs.
     pub fn encoded_size(&self) -> Option<usize> {
-        let mut size: usize = 4 + 4 + 32; // magic + length + chain_root
+        let mut size: usize = 4 + 4 + 32; // magic + length + root_hash
         if self.merkle_root.is_some() {
             size = size.checked_add(32)?;
         }
@@ -239,40 +239,40 @@ mod tests {
 
     #[test]
     fn test_footer_roundtrip_no_merkle() {
-        let chain_root = [0xAA; 32];
+        let root_hash = [0xAA; 32];
         let params_hash = [0xBB; 32];
         let suite = HashSuite::Blake3;
 
-        let encoded = StreamFooter::encode(chain_root, None, &[], &params_hash, suite);
+        let encoded = StreamFooter::encode(root_hash, None, &[], &params_hash, suite);
         let decoded = StreamFooter::decode(&encoded, false, &params_hash, suite).unwrap();
 
-        assert_eq!(decoded.chain_root, chain_root);
+        assert_eq!(decoded.root_hash, root_hash);
         assert_eq!(decoded.merkle_root, None);
         assert_eq!(decoded.receipt_count, 0);
     }
 
     #[test]
     fn test_footer_roundtrip_with_merkle() {
-        let chain_root = [0xAA; 32];
+        let root_hash = [0xAA; 32];
         let merkle_root = [0xCC; 32];
         let params_hash = [0xBB; 32];
         let suite = HashSuite::Blake3;
 
-        let encoded = StreamFooter::encode(chain_root, Some(merkle_root), &[], &params_hash, suite);
+        let encoded = StreamFooter::encode(root_hash, Some(merkle_root), &[], &params_hash, suite);
         let decoded = StreamFooter::decode(&encoded, true, &params_hash, suite).unwrap();
 
-        assert_eq!(decoded.chain_root, chain_root);
+        assert_eq!(decoded.root_hash, root_hash);
         assert_eq!(decoded.merkle_root, Some(merkle_root));
     }
 
     #[test]
     fn test_footer_with_receipts() {
-        let chain_root = [0xAA; 32];
+        let root_hash = [0xAA; 32];
         let params_hash = [0xBB; 32];
         let suite = HashSuite::Blake3;
         let receipts = vec![vec![1, 2, 3, 4], vec![5, 6, 7, 8, 9, 10]];
 
-        let encoded = StreamFooter::encode(chain_root, None, &receipts, &params_hash, suite);
+        let encoded = StreamFooter::encode(root_hash, None, &receipts, &params_hash, suite);
         let decoded = StreamFooter::decode(&encoded, false, &params_hash, suite).unwrap();
 
         assert_eq!(decoded.receipt_count, 2);
@@ -281,12 +281,12 @@ mod tests {
 
     #[test]
     fn test_footer_commitment_tamper_detected() {
-        let chain_root = [0xAA; 32];
+        let root_hash = [0xAA; 32];
         let params_hash = [0xBB; 32];
         let suite = HashSuite::Blake3;
 
-        let mut encoded = StreamFooter::encode(chain_root, None, &[], &params_hash, suite);
-        // Tamper with chain_root in the encoded bytes
+        let mut encoded = StreamFooter::encode(root_hash, None, &[], &params_hash, suite);
+        // Tamper with root_hash in the encoded bytes
         encoded[8] ^= 0x01;
         let err = StreamFooter::decode(&encoded, false, &params_hash, suite).unwrap_err();
         assert!(matches!(err, CbcError::FooterCommitmentMismatch));

@@ -47,7 +47,7 @@ pub mod streaming;
 
 // Re-export key types at crate root
 pub use bootstrap::BootstrapSegment;
-pub use decoder::DecodedArtifact;
+pub use decoder::{DecodedArtifact, ValidationStats};
 pub use encoder::EncoderConfig;
 pub use error::{CbcError, Result};
 pub use hash::HashSuite;

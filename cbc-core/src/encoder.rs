@@ -117,7 +117,7 @@ pub fn encode(
         .collect();
 
     // 4. Compute chain commitments
-    let (commitments, chain_root) = chain::compute_chain(
+    let (commitments, root_hash) = chain::compute_chain(
         &params_canonical,
         &nonce,
         &blocks,
@@ -153,7 +153,7 @@ pub fn encode(
 
     // 7. Encode footer
     let footer_bytes = StreamFooter::encode(
-        chain_root,
+        root_hash,
         merkle_root,
         receipts,
         &params_hash,

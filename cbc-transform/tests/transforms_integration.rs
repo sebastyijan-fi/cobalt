@@ -47,7 +47,7 @@ fn test_t1_truncation() {
 
     // Different root
     assert_ne!(
-        source_decoded.chain_root, derived_decoded.chain_root,
+        source_decoded.root_hash, derived_decoded.root_hash,
         "T1: derived must have different root"
     );
 
@@ -56,8 +56,8 @@ fn test_t1_truncation() {
 
     // Verify receipt
     assert_eq!(receipt.transform_type, TransformType::Truncation);
-    assert_eq!(receipt.source_root, source_decoded.chain_root);
-    assert_eq!(receipt.derived_root, derived_decoded.chain_root);
+    assert_eq!(receipt.source_root, source_decoded.root_hash);
+    assert_eq!(receipt.derived_root, derived_decoded.root_hash);
     receipt::verify_receipt(&receipt, HashSuite::Blake3).unwrap();
 }
 
@@ -78,7 +78,7 @@ fn test_t2_rechunk() {
     assert_eq!(derived_decoded.payload, payload);
 
     // Different root
-    assert_ne!(source_decoded.chain_root, derived_decoded.chain_root);
+    assert_ne!(source_decoded.root_hash, derived_decoded.root_hash);
 
     // Valid receipt
     assert_eq!(receipt.transform_type, TransformType::Rechunk);
@@ -98,7 +98,7 @@ fn test_t3_recompress() {
     assert_eq!(derived_decoded.payload, payload);
 
     // Different root (new nonce)
-    assert_ne!(source_decoded.chain_root, derived_decoded.chain_root);
+    assert_ne!(source_decoded.root_hash, derived_decoded.root_hash);
 
     // Valid receipt
     assert_eq!(receipt.transform_type, TransformType::Recompress);
@@ -148,7 +148,7 @@ fn test_t5_subrange_extract() {
     assert_eq!(derived_decoded.payload, &payload[512..1536]);
 
     // Different root
-    assert_ne!(source_decoded.chain_root, derived_decoded.chain_root);
+    assert_ne!(source_decoded.root_hash, derived_decoded.root_hash);
 
     // Valid receipt
     assert_eq!(receipt.transform_type, TransformType::SubrangeExtract);
@@ -176,10 +176,10 @@ fn test_receipt_chain_provenance() {
     let c_decoded = decoder::decode(&artifact_c, None).unwrap();
 
     // Verify lineage: C → B → A
-    assert_eq!(receipt_bc.source_root, b_decoded.chain_root);
-    assert_eq!(receipt_bc.derived_root, c_decoded.chain_root);
-    assert_eq!(receipt_ab.source_root, a_decoded.chain_root);
-    assert_eq!(receipt_ab.derived_root, b_decoded.chain_root);
+    assert_eq!(receipt_bc.source_root, b_decoded.root_hash);
+    assert_eq!(receipt_bc.derived_root, c_decoded.root_hash);
+    assert_eq!(receipt_ab.source_root, a_decoded.root_hash);
+    assert_eq!(receipt_ab.derived_root, b_decoded.root_hash);
 
     // All receipts valid
     receipt::verify_receipt(&receipt_ab, HashSuite::Blake3).unwrap();

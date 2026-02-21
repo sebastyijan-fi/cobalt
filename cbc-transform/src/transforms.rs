@@ -17,9 +17,9 @@ fn now_timestamp() -> u64 {
 
 /// Helper: extract roots from a decoded artifact.
 fn extract_roots(decoded: &decoder::DecodedArtifact) -> ([u8; 32], [u8; 32]) {
-    let chain_root = decoded.chain_root;
+    let root_hash = decoded.root_hash;
     let merkle_root = decoded.merkle_root.unwrap_or([0u8; 32]);
-    (chain_root, merkle_root)
+    (root_hash, merkle_root)
 }
 
 /// Helper: decode, extract roots, re-encode, create receipt.
@@ -33,7 +33,7 @@ fn transform_reencode(
     existing_receipts: Vec<Vec<u8>>,
 ) -> Result<(Vec<u8>, Receipt)> {
     let decoded_source = decoder::decode(source, None)?;
-    let (source_chain_root, source_merkle_root) = extract_roots(&decoded_source);
+    let (source_root_hash, source_merkle_root) = extract_roots(&decoded_source);
 
     // Generate new nonce
     let mut nonce = [0u8; 16];
@@ -43,13 +43,13 @@ fn transform_reencode(
     // Encode the new artifact without receipts first to get the derived root
     let temp_artifact = encoder::encode(new_config, new_payload, nonce, &[])?;
     let decoded_derived = decoder::decode(&temp_artifact, None)?;
-    let (derived_chain_root, derived_merkle_root) = extract_roots(&decoded_derived);
+    let (derived_root_hash, derived_merkle_root) = extract_roots(&decoded_derived);
 
     // Create receipt
     let receipt = receipt::create_receipt(
-        source_chain_root,
+        source_root_hash,
         source_merkle_root,
-        derived_chain_root,
+        derived_root_hash,
         derived_merkle_root,
         transform_type,
         transform_desc,
@@ -223,12 +223,12 @@ pub fn concatenate(sources: &[&[u8]], signing_key: &SigningKey) -> Result<(Vec<u
 
     let temp = encoder::encode(&config, &combined_payload, nonce, &[])?;
     let decoded_derived = decoder::decode(&temp, None)?;
-    let (derived_chain_root, derived_merkle_root) = extract_roots(&decoded_derived);
+    let (derived_root_hash, derived_merkle_root) = extract_roots(&decoded_derived);
 
     // Build transform descriptor with all source roots
     let mut desc = Vec::new();
     for d in &decoded_sources {
-        desc.extend_from_slice(&d.chain_root);
+        desc.extend_from_slice(&d.root_hash);
     }
 
     // Create receipts for each source
@@ -247,7 +247,7 @@ pub fn concatenate(sources: &[&[u8]], signing_key: &SigningKey) -> Result<(Vec<u
         let receipt = receipt::create_receipt(
             src_root,
             src_merkle,
-            derived_chain_root,
+            derived_root_hash,
             derived_merkle_root,
             TransformType::Concatenate,
             desc.clone(),
@@ -355,12 +355,12 @@ mod tests {
 
         // Roots differ
         let original = decoder::decode(&artifact, None).unwrap();
-        assert_ne!(original.chain_root, decoded.chain_root);
+        assert_ne!(original.root_hash, decoded.root_hash);
 
         // Receipt verifies
         receipt::verify_receipt(&receipt, cbc_core::HashSuite::Blake3).unwrap();
-        assert_eq!(receipt.source_root, original.chain_root);
-        assert_eq!(receipt.derived_root, decoded.chain_root);
+        assert_eq!(receipt.source_root, original.root_hash);
+        assert_eq!(receipt.derived_root, decoded.root_hash);
     }
 
     #[test]

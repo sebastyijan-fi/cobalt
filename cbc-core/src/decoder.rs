@@ -13,6 +13,7 @@ use crate::bootstrap::{BootstrapSegment, BOOTSTRAP_SIZE};
 use crate::chain;
 use crate::error::{CbcError, Result};
 use crate::footer::StreamFooter;
+use crate::hash::HashSuite;
 use crate::merkle;
 use crate::prefix;
 use alloc::format;
@@ -24,10 +25,18 @@ use alloc::vec::Vec;
 pub struct DecodedArtifact {
     pub bootstrap: BootstrapSegment,
     pub payload: Vec<u8>,
-    pub chain_root: [u8; 32],
+    pub root_hash: [u8; 32],
     pub merkle_root: Option<[u8; 32]>,
     pub receipt_slots: Vec<Vec<u8>>,
     pub block_count: u32,
+}
+
+/// Result of a successful validation (without payload extraction).
+#[derive(Debug, Clone)]
+pub struct ValidationStats {
+    pub blocks_verified: u32,
+    pub total_blocks: u32,
+    pub hash_suite: HashSuite,
 }
 
 /// Validate and decode a CBC artifact.
@@ -134,14 +143,14 @@ pub fn decode(data: &[u8], key: Option<[u8; 32]>) -> Result<DecodedArtifact> {
         .collect();
 
     // 3. Verify chain commitments (Family A)
-    let _chain_root = chain::verify_chain(
+    let _root_hash = chain::verify_chain(
         &params_canonical,
         &bootstrap.bootstrap_nonce,
         &blocks,
         block_payload_size,
         suite,
     )?;
-    let chain_root = blocks
+    let root_hash = blocks
         .last()
         .map(|b| b.commitment)
         .unwrap_or_else(|| chain::compute_c0(&params_canonical, &bootstrap.bootstrap_nonce, suite));
@@ -170,7 +179,7 @@ pub fn decode(data: &[u8], key: Option<[u8; 32]>) -> Result<DecodedArtifact> {
     }
 
     // 6. Verify chain root matches footer
-    if footer.chain_root != chain_root {
+    if footer.root_hash != root_hash {
         return Err(CbcError::ChainRootMismatch);
     }
 
@@ -228,7 +237,7 @@ pub fn decode(data: &[u8], key: Option<[u8; 32]>) -> Result<DecodedArtifact> {
     Ok(DecodedArtifact {
         bootstrap,
         payload: final_payload,
-        chain_root,
+        root_hash,
         merkle_root,
         receipt_slots: footer.receipt_slots,
         block_count,
@@ -236,11 +245,11 @@ pub fn decode(data: &[u8], key: Option<[u8; 32]>) -> Result<DecodedArtifact> {
 }
 
 /// Validate a CBC artifact without extracting payload.
-/// Returns Ok(()) if valid.
+/// Returns validation statistics including block counts and hash suite.
 ///
 /// This function is optimized to check integrity (hashes, CRCs, signatures)
 /// without performing expensive decompression or decryption.
-pub fn validate(data: &[u8]) -> Result<()> {
+pub fn validate(data: &[u8]) -> Result<ValidationStats> {
     // 1. Parse and verify bootstrap segment (params_mac)
     if data.len() < BOOTSTRAP_SIZE {
         return Err(CbcError::InsufficientData {
@@ -326,14 +335,14 @@ pub fn validate(data: &[u8]) -> Result<()> {
     }
 
     // 3. Verify chain commitments (Family A)
-    let _chain_root = chain::verify_chain(
+    let _root_hash = chain::verify_chain(
         &params_canonical,
         &bootstrap.bootstrap_nonce,
         &blocks,
         block_payload_size,
         suite,
     )?;
-    let chain_root = blocks
+    let root_hash = blocks
         .last()
         .map(|b| b.commitment)
         .unwrap_or_else(|| chain::compute_c0(&params_canonical, &bootstrap.bootstrap_nonce, suite));
@@ -366,7 +375,7 @@ pub fn validate(data: &[u8]) -> Result<()> {
     }
 
     // 6. Verify chain root matches footer
-    if footer.chain_root != chain_root {
+    if footer.root_hash != root_hash {
         return Err(CbcError::ChainRootMismatch);
     }
 
@@ -379,7 +388,11 @@ pub fn validate(data: &[u8]) -> Result<()> {
 
     // Skipped: Decompression & Payload Extraction (Not needed for validation)
 
-    Ok(())
+    Ok(ValidationStats {
+        blocks_verified: block_count,
+        total_blocks: block_count,
+        hash_suite: suite,
+    })
 }
 
 #[cfg(test)]

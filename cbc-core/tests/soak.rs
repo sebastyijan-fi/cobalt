@@ -887,7 +887,7 @@ fn soak_nonce_uniqueness() {
 
         assert_eq!(decoded.payload, payload);
 
-        let root_inserted = roots.insert(decoded.chain_root);
+        let root_inserted = roots.insert(decoded.root_hash);
         let artifact_inserted = artifacts.insert(artifact);
 
         // Each nonce should produce a unique root and artifact
@@ -1168,7 +1168,7 @@ fn soak_streaming_batch_equivalence() {
                 "streaming/batch payload mismatch: bps={bps} psize={psize}"
             );
             assert_eq!(
-                batch_decoded.chain_root, stream_decoded.chain_root,
+                batch_decoded.root_hash, stream_decoded.root_hash,
                 "streaming/batch chain root mismatch: bps={bps} psize={psize}"
             );
         }
@@ -1202,7 +1202,7 @@ fn soak_cross_hash_validation() {
 
         // Different roots (overwhelmingly likely for any non-trivial payload)
         assert_ne!(
-            dec_b3.chain_root, dec_sha.chain_root,
+            dec_b3.root_hash, dec_sha.root_hash,
             "BLAKE3 and SHA-256 produced same chain root at iteration {i}"
         );
 

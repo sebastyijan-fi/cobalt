@@ -3,7 +3,7 @@
 use clap::Parser;
 use owo_colors::OwoColorize;
 use std::fs;
-use std::io::{self, Read};
+use std::io::{self, IsTerminal, Read};
 use std::path::PathBuf;
 use std::process;
 
@@ -15,6 +15,12 @@ use cbc_cli::*;
 
 fn main() {
     setup_panic();
+
+    // Auto-disable ANSI colors when stdout is not a terminal (piped/redirected)
+    if !std::io::stdout().is_terminal() {
+        owo_colors::set_override(false);
+    }
+
     let cli = Cli::parse();
     let config = load_config();
 
@@ -450,19 +456,19 @@ fn cmd_validate(input: PathBuf, partial: bool, json_output: bool) {
     pb.enable_steady_tick(std::time::Duration::from_millis(100));
 
     match cbc_core::decoder::validate(&data) {
-        Ok(()) => {
+        Ok(stats) => {
             pb.finish_and_clear();
             if json_output {
                 let report = ValidationReport {
                     valid: true,
                     status: "Valid".to_string(),
-                    blocks_verified: 0, // We didn't count them in validate()
-                    total_blocks: None,
+                    blocks_verified: stats.blocks_verified,
+                    total_blocks: Some(stats.total_blocks),
                     error: None,
                 };
                 println!("{}", serde_json::to_string_pretty(&report).unwrap());
             } else {
-                println!("✓ Valid CBC artifact");
+                println!("✓ Valid CBC artifact ({} blocks verified)", stats.blocks_verified);
             }
             process::exit(0);
         }
@@ -610,7 +616,7 @@ fn cmd_inspect(input: PathBuf, json_output: bool) {
                 block_count: bs.block_count,
                 nonce: hex::encode(bs.bootstrap_nonce),
                 flags: Vec::new(),
-                chain_root: None,
+                root_hash: None,
                 merkle_root: None,
                 payload_size: None,
                 receipts: Vec::new(),
@@ -626,7 +632,8 @@ fn cmd_inspect(input: PathBuf, json_output: bool) {
 
             match cbc_core::decoder::decode(&data, None) {
                 Ok(decoded) => {
-                    report.chain_root = Some(hex::encode(decoded.chain_root));
+                    let hash_prefix = format!("{:?}", bs.hash_suite).to_lowercase();
+                    report.root_hash = Some(format!("{}:{}", hash_prefix, hex::encode(decoded.root_hash)));
                     report.merkle_root = decoded.merkle_root.map(hex::encode);
                     report.payload_size = Some(decoded.payload.len());
                     report.validation = "PASS".to_string();
@@ -675,8 +682,8 @@ fn cmd_inspect(input: PathBuf, json_output: bool) {
                 println!("{:<18} {}", "Nonce:".dimmed(), report.nonce);
                 println!("{:<18} {:?}", "Flags:".dimmed(), report.flags);
 
-                if let Some(cr) = &report.chain_root {
-                    println!("Chain root:        {}", cr);
+                if let Some(rh) = &report.root_hash {
+                    println!("Root hash:         {}", rh);
                 }
                 if let Some(mr) = &report.merkle_root {
                     println!("Merkle root:       {}", mr);

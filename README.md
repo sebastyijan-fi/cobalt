@@ -17,42 +17,56 @@ A binary container format in which validity and meaning depend on intrinsic rela
 | **Provenance** | Copying produces a different root; transform receipts link old → new with signatures |
 | **Use Cases** | See [docs/USE_CASES.md](docs/USE_CASES.md) for 10 real-world scenarios |
 
+## Install
+
+> **Note:** The package is `cbc-cli`, the binary it installs is **`cbc`**.
+
+```bash
+# Option 1: Install globally (~/.cargo/bin/cbc)
+cargo install --path cbc-cli
+
+# Option 2: Minimal dev build (CLI only, fastest compile)
+cargo build -p cbc-cli
+# Binary at: target/debug/cbc
+
+# Option 3: Full workspace build
+cargo build --workspace
+```
+
 ## Quick Start
 
 ```bash
-# Build
-cargo build --workspace
-
-# Run all tests (92 tests)
+# Run all tests
 cargo test --workspace
 
 # Encode a file
-cargo run -p cbc-cli -- encode -i myfile.pdf -o myfile.cbc --hash blake3 --families A+B
+cbc encode -i myfile.pdf -o myfile.cbc --hash blake3 --families A+B
 
 # Validate
-cargo run -p cbc-cli -- validate -i myfile.cbc
+cbc validate -i myfile.cbc
 
-# Inspect metadata
-cargo run -p cbc-cli -- inspect -i myfile.cbc
+# Inspect metadata (human-readable or JSON for automation)
+cbc inspect -i myfile.cbc
+cbc inspect -i myfile.cbc --json
 
 # Decode (extract payload)
-cargo run -p cbc-cli -- decode -i myfile.cbc -o recovered.pdf
+cbc decode -i myfile.cbc -o recovered.pdf
 
 # Decode to stdout (cat)
-cargo run -p cbc-cli -- cat -i myfile.cbc > recovered.pdf
+cbc cat -i myfile.cbc > recovered.pdf
 
 # Streaming encode (constant memory)
-cargo run -p cbc-cli -- stream-encode -i largefile.bin -o largefile.cbc --families A+B
+cbc stream-encode -i largefile.bin -o largefile.cbc --families A+B
 
 # Generate a Merkle range proof
-cargo run -p cbc-cli -- prove -i myfile.cbc --start 0 --end 3 -o proof.bin
+cbc prove -i myfile.cbc --start 0 --end 3 -o proof.bin
 
 # Verify a range proof
-cargo run -p cbc-cli -- verify-proof -i myfile.cbc -p proof.bin
+cbc verify-proof -i myfile.cbc -p proof.bin
 
 # Transform/Extract with receipt (requires signing key)
-cargo run -p cbc-cli -- keygen -o mykey --alg ed25519
-cargo run -p cbc-cli -- extract -i myfile.cbc -o subset.cbc -k mykey --start 0 --end 3
+cbc keygen -o mykey --alg ed25519
+cbc extract -i myfile.cbc -o subset.cbc -k mykey --start 0 --end 3
 ```
 
 ## Architecture

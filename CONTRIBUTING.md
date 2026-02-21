@@ -42,9 +42,14 @@ If your change affects trust-critical behavior, call that out explicitly in your
 
 ### Build and Test
 
-Run from repo root:
+> **Binary naming:** The `cbc-cli` package installs a binary named **`cbc`**.
 
-```/dev/null/commands.sh#L1-7
+```bash
+# Fastest path: build only the CLI
+cargo build -p cbc-cli
+# Binary at: target/debug/cbc
+
+# Full workspace build + test
 cargo build --workspace
 cargo test --workspace
 cargo clippy --workspace --all-targets --all-features -- -D warnings

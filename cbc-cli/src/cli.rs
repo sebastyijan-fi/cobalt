@@ -22,7 +22,7 @@ pub struct InspectionReport {
     pub block_count: u32,
     pub nonce: String,
     pub flags: Vec<String>,
-    pub chain_root: Option<String>,
+    pub root_hash: Option<String>,
     pub merkle_root: Option<String>,
     pub payload_size: Option<usize>,
     pub receipts: Vec<ReceiptSummary>,

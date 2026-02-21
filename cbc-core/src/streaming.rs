@@ -212,7 +212,7 @@ impl StreamingEncoder {
             final_blocks.push(block.encode(bps));
         }
 
-        let chain_root = self.prev_commitment;
+        let root_hash = self.prev_commitment;
         let final_block_count = self.block_count as u32;
 
         // Final Bootstrap (for hash/params check)
@@ -234,7 +234,7 @@ impl StreamingEncoder {
         };
 
         let footer_bytes = StreamFooter::encode(
-            chain_root,
+            root_hash,
             merkle_root,
             &[], // Receipts empty for now
             &self.params_hash,
@@ -400,7 +400,7 @@ impl StreamingDecoder {
             bootstrap.hash_suite,
         )?;
 
-        if footer.chain_root != self.prev_commitment {
+        if footer.root_hash != self.prev_commitment {
             return Err(CbcError::ChainRootMismatch);
         }
 

@@ -44,12 +44,12 @@ fn footer_strategy(has_merkle: bool) -> impl Strategy<Value = StreamFooter> {
     };
 
     (
-        prop::array::uniform32(0..u8::MAX), // chain_root
+        prop::array::uniform32(0..u8::MAX), // root_hash
         merkle_strat,                       // merkle_root
         prop::collection::vec(encoded_receipt_strategy(), 0..10), // receipt_slots
     )
         .prop_map(|(cr, mr, receipts)| StreamFooter {
-            chain_root: cr,
+            root_hash: cr,
             merkle_root: mr,
             receipt_count: receipts.len() as u32,
             receipt_slots: receipts,
@@ -85,7 +85,7 @@ proptest! {
         if !has_merkle { footer.merkle_root = None; }
 
         let encoded = StreamFooter::encode(
-            footer.chain_root,
+            footer.root_hash,
             footer.merkle_root,
             &footer.receipt_slots,
             &params_hash,
@@ -93,7 +93,7 @@ proptest! {
         );
         let decoded = StreamFooter::decode(&encoded, has_merkle, &params_hash, suite).unwrap();
 
-        prop_assert_eq!(footer.chain_root, decoded.chain_root);
+        prop_assert_eq!(footer.root_hash, decoded.root_hash);
         prop_assert_eq!(footer.merkle_root, decoded.merkle_root);
         prop_assert_eq!(footer.receipt_slots, decoded.receipt_slots);
     }

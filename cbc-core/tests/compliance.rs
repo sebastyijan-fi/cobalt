@@ -57,7 +57,7 @@ fn test_reference_vector_minimal_artifact() {
     assert_eq!(artifact[7], 0x01); // commitment_mode = Family A
 
     println!("Reference artifact size: {} bytes", artifact.len());
-    println!("Chain root: {}", hex::encode(decoded.chain_root));
+    println!("Chain root: {}", hex::encode(decoded.root_hash));
 }
 
 // =========================================================================

@@ -134,6 +134,6 @@ if __name__ == "__main__":
     root = verify_artifact(artifact_data)
     if "--json" in sys.argv:
         import json
-        print(json.dumps({"chain_root": root.hex()}))
+        print(json.dumps({"root_hash": root.hex()}))
     else:
         print(f"✓ Verified. Chain Root: {root.hex()}")

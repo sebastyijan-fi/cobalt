@@ -109,7 +109,7 @@ The footer seals the CBC stream. It varies in length depending on the included c
 
 | Offset | Length | Name | Constraint |
 |--------|--------|------|------------|
-| 0      | 32     | `chain_root` | Required unconditionally under Family A. The terminal commitment hash. |
+| 0      | 32     | `root_hash` | Required unconditionally under Family A. The terminal commitment hash. |
 | 32     | 32     | `merkle_root`| Present ONLY if Family B (`0x02`) is active. |
 | Varies | 2      | `receipt_count`| Unsigned 16-bit integer denoting the number of cryptographic receipts appended. |
 | Varies | Varies | `receipts`   | N concatenated sub-receipt buffers. |
@@ -122,7 +122,7 @@ Decoders **MUST** verify that `footer_length` is strictly greater than or equal 
 
 ## 7. Extract/Subrange Validations
 
-When extracting a subrange of an artifact, the original `chain_root` and `merkle_root` **MUST NOT** be tampered with. The deriving server **MUST** provide a KMS/HSM signature over the subrange proving cryptographic provenance back to the original tree.
+When extracting a subrange of an artifact, the original `root_hash` and `merkle_root` **MUST NOT** be tampered with. The deriving server **MUST** provide a KMS/HSM signature over the subrange proving cryptographic provenance back to the original tree.
 
 ## 8. Backwards Compatibility
 
