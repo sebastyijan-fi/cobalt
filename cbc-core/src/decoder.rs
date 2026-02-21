@@ -180,7 +180,7 @@ pub fn decode(data: &[u8], key: Option<[u8; 32]>) -> Result<DecodedArtifact> {
 
     // 6. Verify chain root matches footer
     if footer.root_hash != root_hash {
-        return Err(CbcError::ChainRootMismatch);
+        return Err(CbcError::RootHashMismatch);
     }
 
     // Verify Merkle root matches footer (if enabled)
@@ -376,7 +376,7 @@ pub fn validate(data: &[u8]) -> Result<ValidationStats> {
 
     // 6. Verify chain root matches footer
     if footer.root_hash != root_hash {
-        return Err(CbcError::ChainRootMismatch);
+        return Err(CbcError::RootHashMismatch);
     }
 
     // Verify Merkle root matches footer (if enabled)

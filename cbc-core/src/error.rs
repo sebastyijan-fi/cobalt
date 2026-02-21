@@ -76,7 +76,7 @@ pub enum CbcError {
         index: u32,
     },
 
-    ChainRootMismatch,
+    RootHashMismatch,
 
     MerkleRootMismatch,
 
@@ -200,8 +200,8 @@ impl fmt::Display for CbcError {
             Self::ChainCommitmentMismatch { index } => {
                 alloc::format!("chain commitment mismatch at block {}", index)
             }
-            Self::ChainRootMismatch => {
-                "chain root mismatch: footer root does not match final block commitment".to_string()
+            Self::RootHashMismatch => {
+                "root hash mismatch: footer root does not match final block commitment".to_string()
             }
             Self::MerkleRootMismatch => "merkle root mismatch".to_string(),
             Self::InvalidFooterMagic => "invalid footer magic: expected CBCF".to_string(),

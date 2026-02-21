@@ -401,7 +401,7 @@ impl StreamingDecoder {
         )?;
 
         if footer.root_hash != self.prev_commitment {
-            return Err(CbcError::ChainRootMismatch);
+            return Err(CbcError::RootHashMismatch);
         }
 
         if let Some(mr) = footer.merkle_root {
