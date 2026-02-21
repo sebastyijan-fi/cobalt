@@ -9,29 +9,15 @@ if [ ! -f "Cargo.toml" ]; then
     exit 1
 fi
 
-DEST_DIR="$HOME/.local/bin"
-mkdir -p "$DEST_DIR"
+echo "Installing cbc via cargo install..."
+cargo install --path cbc-cli --force
 
-echo "Installing cbc to $DEST_DIR..."
-# We assume the build has already run or will be run.
-# For robustness, we check if target/release/cbc differs or is missing.
-
-if [ ! -f "target/release/cbc" ]; then
-    echo "Building Cobalt..."
-    cargo build --release
+# Clean up any old binary at ~/.local/bin to avoid shadowing
+if [ -f "$HOME/.local/bin/cbc" ]; then
+    echo "Removing old binary at ~/.local/bin/cbc to avoid PATH shadowing..."
+    rm "$HOME/.local/bin/cbc"
 fi
 
-cp target/release/cbc "$DEST_DIR/cbc"
-chmod +x "$DEST_DIR/cbc"
-
-echo "✓ Installation complete: $DEST_DIR/cbc"
 echo ""
-
-# Check PATH
-if [[ ":$PATH:" != *":$DEST_DIR:"* ]]; then
-    echo "WARNING: $DEST_DIR is not in your PATH."
-    echo "Add the following to your shell config (~/.bashrc, ~/.zshrc):"
-    echo "    export PATH=\"$DEST_DIR:\$PATH\""
-else
-    echo "Usage: cbc --help"
-fi
+echo "✓ Installed: $(which cbc)"
+echo "Usage: cbc --help"
